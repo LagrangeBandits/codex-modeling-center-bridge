@@ -1,6 +1,6 @@
 {
   "name": "codex-modeling-center-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cross-platform desktop bridge for a private CAD modeling center",
   "license": "MIT",
   "type": "module",
@@ -14,8 +14,8 @@
     "doctor": "node src/cli.mjs doctor",
     "start": "node src/cli.mjs start",
     "desktop:dev": "electron .",
-    "desktop:pack": "electron-builder --dir",
-    "desktop:dist": "electron-builder"
+    "desktop:pack": "electron-builder --dir --publish never",
+    "desktop:dist": "electron-builder --publish never"
   },
   "engines": {
     "node": ">=24"
