@@ -40,7 +40,7 @@ function eventItem(event) {
 
 function markdownFromEvents({ prompt, threadId, events, finalResponse }) {
   const lines = [
-    "# Codex 本地任务对话",
+    "# Codex 本地任务摘要",
     "",
     `- 本地线程：\`${threadId || "未返回"}\``,
     `- 生成时间：${new Date().toISOString()}`,
@@ -126,7 +126,7 @@ export async function runCodexTurn({ taskDirectory, prompt, config, previousThre
   const sanitizedEvents = events.map((event) => sanitize(event));
   await fs.writeFile(path.join(taskDirectory, "events.jsonl"), `${sanitizedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(taskDirectory, "artifacts", "conversation.md"), markdownFromEvents({ prompt, threadId, events, finalResponse }), "utf8");
-  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ threadId, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "codex", threadId, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
   return { threadId, finalResponse, events };
 }
 
@@ -140,7 +140,8 @@ export async function prepareTaskDirectory(taskDirectory, task) {
 export async function loadSession(taskDirectory) {
   try {
     const session = JSON.parse(await fs.readFile(path.join(taskDirectory, "session.json"), "utf8"));
-    return typeof session.threadId === "string" ? session : null;
+    if (session.agent === "claude") return typeof session.sessionId === "string" ? session : null;
+    return typeof session.threadId === "string" ? { agent: "codex", ...session } : null;
   } catch {
     return null;
   }

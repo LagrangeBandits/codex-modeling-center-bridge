@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
 import { normalizeSite } from "../src/site-client.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
-import { isSafeTaskId, isSupportedNodeVersion } from "../src/constants.mjs";
+import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
+import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs";
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);
@@ -39,4 +40,25 @@ test("requires the supported local runtimes", () => {
   assert.equal(isSupportedPythonVersion("3.9.6"), false);
   assert.equal(isSafeTaskId("task-2026.08_01"), true);
   assert.equal(isSafeTaskId("../../outside"), false);
+});
+
+test("supports selectable local modeling agents", () => {
+  assert.equal(normalizeAgent(undefined), "codex");
+  assert.equal(normalizeAgent("Claude"), "claude");
+  assert.equal(agentLabel("claude"), "Claude Code");
+  assert.throws(() => normalizeAgent("unknown"), /可选值为 codex 或 claude/);
+});
+
+test("parses Claude stream-json events without executing a CLI", () => {
+  const assistant = parseClaudeEventLine(JSON.stringify({
+    type: "assistant",
+    session_id: "claude-session-1",
+    message: { content: [{ type: "text", text: "已生成模型" }, { type: "tool_use", name: "Bash" }] },
+  }));
+  const result = parseClaudeEventLine(JSON.stringify({ type: "result", subtype: "success", session_id: "claude-session-1", result: "完成" }));
+  assert.equal(assistant.session_id, "claude-session-1");
+  assert.equal(claudeEventText(assistant), "已生成模型");
+  assert.equal(claudeEventText(result), "完成");
+  assert.equal(parseClaudeEventLine(""), null);
+  assert.throws(() => parseClaudeEventLine("not-json"), SyntaxError);
 });

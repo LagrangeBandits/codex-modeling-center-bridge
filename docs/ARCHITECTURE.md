@@ -1,36 +1,55 @@
-# Bridge architecture
+# Modeling Center Bridge architecture
 
 ```text
-Private site (task queue + R2 delivery)
+Private site (allowlisted task queue + delivery storage)
         │ HTTPS, one-time pairing + runner token
-        ├── Mac Bridge ── local Codex SDK ── CadQuery/OpenCascade
-        └── Windows Bridge ── local Codex SDK ── CadQuery/OpenCascade
+        ▼
+Mac / Windows desktop app (Electron UI)
+        │ local IPC, no secrets in renderer
+        ▼
+Shared Node 24 Runner
+        ├── Codex adapter ── local Codex CLI/SDK login
+        └── Claude adapter ── local Claude Code CLI login
+                │
+                ▼
+        Python 3.11 + CadQuery/OpenCascade
 ```
 
-The bootstrap path is user-scoped. Node 24 and uv are kept under the bridge's application data directory when they are missing; uv then manages a Python 3.11 runtime, and CadQuery is installed only inside the bridge's virtual environment. System Python, Codex login state, and OS credential stores are not overwritten.
+The desktop program is the cross-platform product surface. The CLI remains available for diagnostics, installation, automation, and headless operation. Both surfaces call the same Runner and Agent adapters.
+
+## Product boundary
+
+The program connects a private modeling website to a user's own Mac or Windows device. It does not sync the user's personal Codex or Claude chat history, and it does not require the friend-facing website to launch a Codex conversation. One website task creates one task-local Agent session record under the local workspace; only the selected task's deliverables and redacted summary are eligible for upload.
 
 ## Task lifecycle
 
 1. The owner creates a short-lived pairing code in the private site.
-2. A device runs `pair`; the site atomically consumes the code and returns a runner token.
-3. The bridge stores the site bypass token and runner token in OS-protected local storage.
-4. Each bridge polls the site. The site claims a queued task with a conditional update, so two devices cannot claim the same task.
-5. The bridge creates an isolated task directory and a fresh or resumable local Codex thread.
-6. Codex writes the CAD generator, runs the local modeling/validation commands, and places deliverables in `artifacts/`.
-7. The bridge uploads only allowed CAD/support files and marks the task complete after a real CAD file exists.
+2. The desktop app sends the code and selected Agent to `/api/runner/register`.
+3. The app stores the site bridge authorization and Runner token in macOS Keychain or Windows DPAPI.
+4. The Runner polls the site. The server claims a queued task with a conditional update, so two devices cannot claim the same task.
+5. The Runner creates an isolated task directory and dispatches the task to the configured Agent adapter.
+6. The Agent writes the CAD generator, runs local modeling/validation commands, and places deliverables in `artifacts/`.
+7. The Runner uploads only allowed CAD/support files and marks the task complete after a real CAD file exists.
 
-## Local conversation boundary
+## Agent boundary
 
-The bridge persists one `threadId` per website task. `sessions` lists only those task-bound IDs; it never scans or exports the rest of the user's Codex history. `resume` continues one selected task thread. The site receives a redacted `conversation.md` summary, while raw `events.jsonl` stays on the device.
+Both adapters receive the same task-local `AGENTS.md` modeling rules and use the same Python/CadQuery environment. The Codex adapter preserves existing task records using `threadId`; the Claude adapter uses Claude Code's local `session_id`. Older Codex records without an `agent` field remain readable as Codex records.
+
+Claude runs as a subprocess with `stream-json`, a task-local settings file, a no-network allowlist, and a sandbox requirement. Native Windows Claude sandbox support is limited by Claude Code itself; unattended Claude tasks on Windows should run through WSL2. Codex remains available as the native Windows option.
 
 ## Account and quota boundary
 
-The bridge does not accept or transmit a shared OpenAI API key. The Codex SDK inherits the local Codex CLI environment. Each device therefore uses the account already authenticated in its own Codex installation. If `OPENAI_API_KEY` is present, the bridge warns before starting because that may change the billing path.
+The bridge does not accept or transmit a shared OpenAI or Anthropic API key. Each adapter uses the local installation and authentication already present on that device. The Claude adapter removes `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from its child process so an accidental API environment variable cannot silently switch the selected local CLI to an API billing path. OAuth credentials, if used by the official CLI, stay local and are never logged or uploaded.
+
+## Desktop security boundary
+
+The Electron renderer has no Node integration. Context isolation and a narrow preload IPC surface keep filesystem, process, pairing, and secret operations in the main process. Pairing secrets are sent only for the immediate local pairing call, then cleared from the form; stored credentials are read by the existing state module, not passed on command lines.
 
 ## Failure behavior
 
 - Pairing codes expire and can be used once.
 - Polling is safe to repeat; the server-side conditional claim prevents duplicate work.
+- A task with an Agent different from the runner's configured Agent is rejected and reported failed rather than silently using another login.
 - A failed task is reported as failed and leaves its local task directory for inspection.
 - A failed dependency update does not delete an existing virtual environment.
 - A runner can be restarted; queued tasks remain queued on the site.

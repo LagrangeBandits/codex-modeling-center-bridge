@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';">
+    <title>云建模中心</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">PRIVATE MODELING CENTER</p>
+          <h1>云建模中心</h1>
+          <p class="subtitle">把网站任务安全交给这台 Mac 或 Windows 设备本地完成。</p>
+        </div>
+        <div id="runnerBadge" class="badge idle">Runner 未启动</div>
+      </header>
+
+      <section class="grid">
+        <article class="card wide">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">DEVICE</p>
+              <h2>本机状态</h2>
+            </div>
+            <button id="refreshButton" class="button secondary">刷新</button>
+          </div>
+          <div id="environment" class="status-grid"><p class="muted">正在读取本机环境…</p></div>
+          <p id="statusMessage" class="message"></p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">AGENT</p>
+          <h2>选择建模 Agent</h2>
+          <label for="agent">本机执行引擎</label>
+          <select id="agent">
+            <option value="codex">Codex</option>
+            <option value="claude">Claude Code</option>
+          </select>
+          <p class="hint">这是本机建模引擎选项，不会同步你的个人聊天记录。</p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">PAIRING</p>
+          <h2>连接私有网站</h2>
+          <label for="site">网站地址</label>
+          <input id="site" type="url" placeholder="https://你的私有网站">
+          <label for="code">一次性配对码</label>
+          <input id="code" inputmode="text" autocomplete="off" placeholder="8 位配对码">
+          <label for="siteAuth">站点桥接授权</label>
+          <input id="siteAuth" type="password" autocomplete="off" placeholder="仅在本机暂存并写入安全存储">
+          <label for="deviceName">设备名称（可选）</label>
+          <input id="deviceName" autocomplete="off" placeholder="例如：小瑞的 Mac">
+          <button id="pairButton" class="button primary">配对设备</button>
+          <p class="hint">授权不会进入命令行参数、Git 或网站任务内容。</p>
+        </article>
+
+        <article class="card wide runner-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">RUNNER</p>
+              <h2>任务执行</h2>
+            </div>
+            <div class="actions">
+              <button id="startButton" class="button primary">启动 Runner</button>
+              <button id="stopButton" class="button danger" disabled>停止</button>
+            </div>
+          </div>
+          <p id="runnerDescription" class="muted">完成配对后，这台设备会按选择的 Agent 领取网站任务。</p>
+          <pre id="runnerLog" class="log" aria-live="polite">等待操作…</pre>
+        </article>
+      </section>
+
+      <footer>任务状态和交付文件来自私有网站；本地 Agent 会话只保留在对应任务目录。</footer>
+    </main>
+    <script type="module" src="./renderer.mjs"></script>
+  </body>
+</html>

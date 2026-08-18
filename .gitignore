@@ -3,6 +3,7 @@ npm-debug.log*
 .DS_Store
 *.log
 coverage/
+dist/
 .env
 .env.*
 !.env.example

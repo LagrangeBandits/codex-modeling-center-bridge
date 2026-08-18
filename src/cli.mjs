@@ -6,25 +6,25 @@ import { bootstrapModelingEnvironment, formatDoctor, inspectEnvironment } from "
 import { pairSite } from "./site-client.mjs";
 import { configPath, dataDirectory, loadConfig } from "./state.mjs";
 import { listLocalSessions, resumeLocalConversation, startRunner } from "./runner.mjs";
-import { DEFAULT_NODE_VERSION, isSafeTaskId, isSupportedNodeVersion, platformLabel } from "./constants.mjs";
+import { agentLabel, DEFAULT_NODE_VERSION, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, platformLabel } from "./constants.mjs";
 
 function help() {
   console.log(`
-Codex Modeling Center Bridge
+Modeling Center Bridge
 
 用法:
   codex-modeling-bridge doctor
   codex-modeling-bridge bootstrap --yes
-  codex-modeling-bridge pair --site <站点> --code <配对码> --site-auth <桥接授权>
-  codex-modeling-bridge onboard --install --yes --site <站点> --code <配对码> --site-auth <桥接授权> --start
-  codex-modeling-bridge start [--once] [--concurrency 1]
+  codex-modeling-bridge pair --agent codex|claude --site <站点> --code <配对码> --site-auth <桥接授权>
+  codex-modeling-bridge onboard --agent codex|claude --install --yes --site <站点> --code <配对码> --site-auth <桥接授权> --start
+  codex-modeling-bridge start [--agent codex|claude] [--once] [--concurrency 1]
   codex-modeling-bridge pull                 拉取并执行一条网站任务
-  codex-modeling-bridge sessions             查看本机已建立的 Codex 线程
+  codex-modeling-bridge sessions             查看本机任务绑定的 Agent 会话
   codex-modeling-bridge resume <任务ID> --message "继续验证并修复模型"
 
 说明:
-  - Codex 推理发生在本机，默认继承该设备当前 Codex/ChatGPT 登录状态。
-  - 不要设置 OPENAI_API_KEY，否则 Codex 可能改走 API 额度。
+  - 建模 Agent 在本机运行；默认使用 Codex，也可在配对时选择 Claude Code。
+  - 不要在网站任务中上传或复制任何 Agent 登录状态。
   - 站点桥接授权和 Runner token 保存在本机 Keychain/Windows DPAPI，不进入 Git。
 `);
 }
@@ -57,22 +57,24 @@ async function commandBootstrap(parsed) {
 
 async function commandPair(parsed) {
   requireSupportedNode();
+  const agent = normalizeAgent(valueOf(parsed, "agent"));
   const response = await pairSite({
     site: requiredValue(parsed, "site"),
     code: requiredValue(parsed, "code"),
     siteAuth: valueOf(parsed, "site-auth"),
     name: valueOf(parsed, "name"),
-    agent: "codex",
+    agent,
     workspace: valueOf(parsed, "workspace"),
   });
   console.log(`配对成功：${response.name}`);
-  console.log(`平台：${platformLabel(response.platform)} · Agent：Codex`);
+  console.log(`平台：${platformLabel(response.platform)} · Agent：${agentLabel(response.agent || agent)}`);
   console.log("现在可以运行：codex-modeling-bridge start");
 }
 
 async function commandOnboard(parsed) {
   requireSupportedNode();
   const config = await loadConfig();
+  const agent = normalizeAgent(valueOf(parsed, "agent", config.agent));
   const report = await commandDoctor({ values: {}, positionals: [] });
   const needsInstall = hasFlag(parsed, "install") || !report.cadquery.installed;
   if (needsInstall) {
@@ -83,8 +85,11 @@ async function commandOnboard(parsed) {
     console.log(`本地建模依赖已安装：${result.cadquery}`);
   }
   const finalReport = needsInstall ? await inspectEnvironment(config) : report;
-  if (!finalReport.codex.installed) {
-    throw new Error("建模依赖已准备，但未发现 Codex CLI。请按 https://learn.chatgpt.com/docs/codex/cli 安装 Codex，并在本机运行一次 codex 完成登录后重试 onboard。");
+  if (!finalReport[agent]?.installed) {
+    if (agent === "claude") {
+      throw new Error("建模依赖已准备，但未发现 Claude Code。请按 https://code.claude.com/docs/en/getting-started 安装并在本机完成登录后重试 onboard --agent claude。");
+    }
+    throw new Error("建模依赖已准备，但未发现 Codex CLI。请按 https://learn.chatgpt.com/docs/codex/cli 安装并在本机完成登录后重试 onboard --agent codex。");
   }
   if (valueOf(parsed, "site") || valueOf(parsed, "code")) {
     await commandPair(parsed);
@@ -100,6 +105,7 @@ async function commandStart(parsed, once = false) {
   const overrides = {};
   if (valueOf(parsed, "model")) overrides.model = valueOf(parsed, "model");
   if (valueOf(parsed, "reasoning-effort")) overrides.reasoningEffort = valueOf(parsed, "reasoning-effort");
+  if (valueOf(parsed, "agent")) overrides.agent = normalizeAgent(valueOf(parsed, "agent"));
   await startRunner({
     once: once || hasFlag(parsed, "once"),
     concurrency: valueOf(parsed, "concurrency", 1),
@@ -112,10 +118,10 @@ async function commandSessions() {
   const config = await loadConfig();
   const sessions = await listLocalSessions(config);
   if (!sessions.length) {
-    console.log("还没有本地 Codex 线程。");
+    console.log("还没有本地任务 Agent 会话。");
     return;
   }
-  for (const session of sessions) console.log(`${session.taskId}\t${session.threadId}\t${session.updatedAt}`);
+  for (const session of sessions) console.log(`${session.taskId}\t${session.agent || "codex"}\t${session.threadId || session.sessionId || "未返回"}\t${session.updatedAt}`);
 }
 
 async function commandResume(parsed) {

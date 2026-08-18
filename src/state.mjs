@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { appDataDirectory, CONFIG_VERSION, defaultModelingEnvironment, defaultWorkspace, platformId } from "./constants.mjs";
+import { appDataDirectory, CONFIG_VERSION, DEFAULT_AGENT, defaultModelingEnvironment, defaultWorkspace, normalizeAgent, platformId } from "./constants.mjs";
 import { execFileText } from "./process.mjs";
 
 const CONFIG_PATH = path.join(appDataDirectory(), "config.json");
@@ -38,7 +38,7 @@ export async function loadConfig() {
     workspace: config.workspace || defaultWorkspace(),
     modelingEnvironment: config.modelingEnvironment || defaultModelingEnvironment(),
     platform: config.platform || platformId(),
-    agent: config.agent || "codex",
+    agent: normalizeAgent(config.agent || DEFAULT_AGENT),
   };
 }
 

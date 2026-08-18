@@ -1,6 +1,6 @@
 import path from "node:path";
 import { loadSecret } from "./state.mjs";
-import { platformId } from "./constants.mjs";
+import { normalizeAgent, platformId } from "./constants.mjs";
 
 export function normalizeSite(value) {
   if (!value) throw new Error("缺少站点地址");
@@ -48,6 +48,7 @@ export async function siteRequest(config, endpoint, options = {}) {
 
 export async function pairSite({ site, code, siteAuth, name, agent = "codex", workspace }) {
   const normalized = normalizeSite(site);
+  const selectedAgent = normalizeAgent(agent);
   const token = String(siteAuth || process.env.OAI_SITES_BYPASS_TOKEN || "").trim();
   if (!token) throw new Error("缺少站点桥接授权。请从网站复制桥接授权后通过 --site-auth 或 OAI_SITES_BYPASS_TOKEN 传入。");
   if (!/^[A-Z2-9]{8}$/.test(String(code).trim().toUpperCase())) {
@@ -64,7 +65,7 @@ export async function pairSite({ site, code, siteAuth, name, agent = "codex", wo
         code: String(code).trim().toUpperCase(),
         name: name || undefined,
         platform: platformId(),
-        agent,
+        agent: selectedAgent,
       }),
     },
   );
@@ -75,7 +76,7 @@ export async function pairSite({ site, code, siteAuth, name, agent = "codex", wo
     runnerId: response.runnerId,
     name: response.name || name,
     platform: response.platform || platformId(),
-    agent: response.agent || agent,
+    agent: normalizeAgent(response.agent || selectedAgent),
     workspace: workspace ? path.resolve(workspace) : undefined,
   });
   // Keep these writes sequential: the Windows DPAPI/file backend updates one JSON file.
