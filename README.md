@@ -30,7 +30,7 @@
 ### macOS
 
 ```bash
-git clone <你的新 GitHub 仓库地址>
+git clone https://github.com/LagrangeBandits/codex-modeling-center-bridge.git
 cd codex-modeling-center-bridge
 chmod +x scripts/install-macos.sh
 ./scripts/install-macos.sh
@@ -39,7 +39,7 @@ chmod +x scripts/install-macos.sh
 ### Windows PowerShell
 
 ```powershell
-git clone <你的新 GitHub 仓库地址>
+git clone https://github.com/LagrangeBandits/codex-modeling-center-bridge.git
 Set-Location codex-modeling-center-bridge
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-windows.ps1
