@@ -47,9 +47,9 @@ export async function execFileText(file, args = [], options = {}) {
   });
 }
 
-export async function commandVersion(file, args = ["--version"]) {
+export async function commandVersion(file, args = ["--version"], options = {}) {
   try {
-    const result = await execFileText(file, args, { timeout: 15_000 });
+    const result = await execFileText(file, args, { timeout: 15_000, ...options });
     return (result.stdout || result.stderr).trim().split(/\r?\n/)[0] || "可用";
   } catch {
     return null;

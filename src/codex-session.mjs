@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Codex } from "@openai/codex-sdk";
+import { runtimeEnvironment } from "./desktop-runtime.mjs";
 import { environmentPythonPath } from "./modeling-env.mjs";
 
 const ROOT_DIRECTORY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -96,7 +97,7 @@ function sdkThreadOptions(taskDirectory, config) {
 }
 
 function sdkEnvironment(config) {
-  const environment = { ...process.env };
+  const environment = runtimeEnvironment();
   const pythonPath = environmentPythonPath(config);
   const pythonDirectory = path.dirname(pythonPath);
   environment.PATH = `${pythonDirectory}${path.delimiter}${environment.PATH || ""}`;

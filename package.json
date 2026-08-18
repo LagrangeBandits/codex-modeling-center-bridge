@@ -41,7 +41,15 @@
       "src/**/*",
       "templates/**/*",
       "package.json",
-      "package-lock.json"
+      "package-lock.json",
+      "!desktop/index 2.html",
+      "!desktop/main 2.mjs",
+      "!desktop/preload 2.cjs",
+      "!desktop/renderer 2.mjs",
+      "!desktop/styles 2.css",
+      "!src/agent-session 2.mjs",
+      "!src/claude-session 2.mjs",
+      "!src/desktop-runtime 2.mjs"
     ],
     "mac": {
       "target": [

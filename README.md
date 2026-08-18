@@ -56,7 +56,7 @@ node src/cli.mjs bootstrap --yes
 npm run desktop:dev
 ```
 
-桌面界面提供本机状态、Agent 选择、网站配对以及 Runner 启动/停止。正式安装包必须在目标平台构建：
+桌面界面提供本机状态、Agent 选择、临时配对窗口、云端系统入口以及 Runner 启动/停止。新设备可以直接点击“一键安装 / 修复工作环境”，准备用户目录 Node.js 24、Python 3.11 和 CadQuery；Codex/Claude Code 的安装与首次登录仍由设备使用者确认。正式安装包必须在目标平台构建：
 
 ```bash
 npm run desktop:dist
@@ -76,9 +76,10 @@ Electron 主进程使用窄 IPC 接口处理文件、配对和 Runner；渲染�
 
 ## 从网站配对
 
-1. 在私有网站登录后生成 Runner 一次性配对码。
+1. 在云端建模系统登录后生成 Runner 一次性配对码。
 2. 复制“站点桥接授权”到当前设备；不要把它发到聊天、Issue 或 Git。
-3. 在桌面页面选择 Agent、填写网站地址、配对码和授权并点击“配对设备”。授权成功后会写入 macOS Keychain 或 Windows 当前用户 DPAPI，并从页面清空。
+3. 在桌面页面点击“连接至云端建模系统”，临时填写网站地址、配对码和授权。授权成功后会写入 macOS Keychain 或 Windows 当前用户 DPAPI，并从页面清空。
+4. 配对完成后，可以点击“一键前往建模网站”打开云端系统；配对表单不会常驻主界面。
 
 CLI 用户可以使用下面的方式：
 

@@ -1,18 +1,19 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { agentLabel, normalizeAgent } from "../src/constants.mjs";
-import { inspectEnvironment } from "../src/modeling-env.mjs";
-import { pairSite } from "../src/site-client.mjs";
+import { bootstrapModelingEnvironment, inspectEnvironment } from "../src/modeling-env.mjs";
+import { normalizeSite, pairSite } from "../src/site-client.mjs";
 import { loadConfig } from "../src/state.mjs";
-import { resolveBridgeNode } from "../src/desktop-runtime.mjs";
+import { prepareNodeRuntime, resolveBridgeNode, runtimeEnvironment } from "../src/desktop-runtime.mjs";
 
 const DESKTOP_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 let runnerProcess = null;
 let runnerState = { running: false, pid: null, agent: null, output: [] };
+let environmentPreparation = null;
 
 function bridgeRoot() {
   if (app.isPackaged) return path.join(process.resourcesPath, "app.asar.unpacked");
@@ -43,6 +44,11 @@ function sendRunnerEvent(type, payload = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("runner:event", event);
 }
 
+function sendEnvironmentEvent(type, payload = {}) {
+  const event = { type, ...payload };
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("environment:event", event);
+}
+
 function rememberOutput(stream, chunk) {
   const lines = String(chunk).split(/\r?\n/).map((line) => redact(line)).filter(Boolean);
   runnerState.output = [...runnerState.output, ...lines].slice(-80);
@@ -55,16 +61,36 @@ function runnerStatus() {
 
 async function status() {
   const config = await loadConfig();
-  const report = await inspectEnvironment(config);
+  let nodeRuntime = null;
+  let nodeRuntimeError = null;
   try {
-    const runtime = await resolveBridgeNode();
-    report.node = runtime.version;
-    report.nodeSupported = true;
-    report.nodeRuntime = runtime.binary;
-  } catch {
-    // Keep the Electron runtime report so the UI can explain that Node 24 is missing.
+    nodeRuntime = await resolveBridgeNode();
+  } catch (error) {
+    nodeRuntimeError = redact(error.message);
   }
+  const report = await inspectEnvironment(config, { nodeRuntime, requireExternalNode: true });
+  report.nodeRuntimeError = nodeRuntimeError;
   return { config: publicConfig(config), report, runner: runnerStatus() };
+}
+
+async function prepareEnvironment() {
+  if (environmentPreparation) return environmentPreparation;
+  environmentPreparation = (async () => {
+    const onProgress = (message) => sendEnvironmentEvent("progress", { message });
+    onProgress("正在准备本机建模环境…");
+    const node = await prepareNodeRuntime({ onProgress });
+    const config = await loadConfig();
+    const modeling = await bootstrapModelingEnvironment(config, { yes: true, onProgress });
+    const nextStatus = await status();
+    sendEnvironmentEvent("complete", { status: nextStatus });
+    return { node, modeling, status: nextStatus };
+  })().catch((error) => {
+    sendEnvironmentEvent("error", { message: redact(error.message || String(error)) });
+    throw error;
+  }).finally(() => {
+    environmentPreparation = null;
+  });
+  return environmentPreparation;
 }
 
 async function startRunner(input = {}) {
@@ -82,7 +108,7 @@ async function startRunner(input = {}) {
 
   const child = spawn(runtime.binary, [cliPath, "start", "--agent", selectedAgent], {
     cwd: bridgeRoot(),
-    env: { ...process.env },
+    env: runtimeEnvironment(),
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -128,6 +154,14 @@ async function pair(input = {}) {
   };
 }
 
+async function openSite() {
+  const config = await loadConfig();
+  if (!config.site) throw new Error("请先连接至云端建模系统。");
+  const site = normalizeSite(config.site);
+  await shell.openExternal(site);
+  return { site };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 980,
@@ -148,6 +182,8 @@ function createWindow() {
 
 ipcMain.handle("app:status", () => status());
 ipcMain.handle("app:pair", (_event, input) => pair(input));
+ipcMain.handle("environment:prepare", () => prepareEnvironment());
+ipcMain.handle("site:open", () => openSite());
 ipcMain.handle("runner:start", (_event, input) => startRunner(input));
 ipcMain.handle("runner:stop", () => stopRunner());
 ipcMain.handle("runner:status", () => runnerStatus());

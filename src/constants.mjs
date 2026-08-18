@@ -10,6 +10,7 @@ export const AGENT_LABELS = {
   claude: "Claude Code",
 };
 export const DEFAULT_NODE_VERSION = "24";
+export const DEFAULT_NODE_RELEASE = "24.19.0";
 export const DEFAULT_UV_VERSION = "0.12.0";
 export const DEFAULT_CAD_PACKAGE = "cadquery>=2.4,<3";
 export const DEFAULT_PYTHON_VERSION = "3.11";

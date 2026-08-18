@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { runtimeEnvironment } from "./desktop-runtime.mjs";
 import { environmentPythonPath } from "./modeling-env.mjs";
 import { redactForLog } from "./codex-session.mjs";
 
@@ -49,7 +50,7 @@ function claudeExecutable() {
 }
 
 function environmentForClaude(config = {}) {
-  const environment = { ...process.env };
+  const environment = runtimeEnvironment();
   const pythonPath = environmentPythonPath(config);
   const pythonDirectory = path.dirname(pythonPath);
   environment.PATH = `${pythonDirectory}${path.delimiter}${environment.PATH || ""}`;

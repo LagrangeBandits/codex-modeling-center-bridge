@@ -1,8 +1,18 @@
 const api = window.modelingCenter;
 const $ = (id) => document.getElementById(id);
 
+let latestStatus = null;
+let environmentBusy = false;
+let startingRunner = false;
+
 function setMessage(message, isError = false) {
   const target = $("statusMessage");
+  target.textContent = message || "";
+  target.className = isError ? "toast error" : "toast";
+}
+
+function setPairingMessage(message, isError = false) {
+  const target = $("pairingMessage");
   target.textContent = message || "";
   target.className = isError ? "message error" : "message";
 }
@@ -14,24 +24,31 @@ function addLog(line) {
   log.scrollTop = log.scrollHeight;
 }
 
-function statusValue(ok, value, optional = false) {
-  if (ok) return `✓ ${value || "已就绪"}`;
-  return optional ? "— 未发现（可选）" : "— 未就绪";
+function statusValue(ok, value, missing = "未发现") {
+  return ok ? `✓ ${value || "已就绪"}` : `— ${missing}`;
 }
 
-function renderStatus(payload) {
-  const { config, report, runner } = payload;
-  if (config.agent) $("agent").value = config.agent;
-  if (config.site && !$('site').value) $("site").value = config.site;
+function platformLabel(value) {
+  return { darwin: "macOS", macos: "macOS", win32: "Windows", windows: "Windows", linux: "Linux" }[value] || value || "本机";
+}
+
+function agentLabel(value) {
+  return value === "claude" ? "Claude Code" : "Codex";
+}
+
+function renderEnvironment(report) {
+  const nodeValue = report.nodeSupported
+    ? statusValue(true, report.node)
+    : statusValue(false, null, "未发现 Node.js 24+");
   const items = [
-    ["平台", report.platform],
-    ["Node.js", statusValue(report.nodeSupported, report.node)],
-    ["Python", statusValue(Boolean(report.modelingPython), report.modelingPython?.version)],
-    ["CadQuery", statusValue(report.cadquery?.installed, report.cadquery?.version)],
-    ["Codex", statusValue(report.codex?.installed, report.codex?.version, true)],
-    ["Claude Code", statusValue(report.claude?.installed, report.claude?.version, true)],
-    ["网站配对", config.paired ? `✓ ${config.name || "已配对"}` : "— 未配对"],
-    ["工作区", config.workspace || "—"],
+    ["平台", platformLabel(report.platform)],
+    ["Node.js", nodeValue],
+    ["Python", statusValue(Boolean(report.modelingPython), report.modelingPython?.version, "未发现")],
+    ["CadQuery", statusValue(report.cadquery?.installed, report.cadquery?.version, "未安装")],
+    ["Codex", statusValue(report.codex?.installed, report.codex?.version, "未发现")],
+    ["Claude Code", statusValue(report.claude?.installed, report.claude?.version, "未发现")],
+    ["云端连接", latestStatus.config.paired ? `✓ ${latestStatus.config.name || "已连接"}` : "— 未连接"],
+    ["工作区", latestStatus.config.workspace || "—"],
   ];
   $("environment").replaceChildren(...items.map(([label, value]) => {
     const item = document.createElement("div");
@@ -43,16 +60,51 @@ function renderStatus(payload) {
     item.append(name, content);
     return item;
   }));
-  renderRunner(runner);
+}
+
+function renderAgentAvailability(report) {
+  const selected = $("agent").value;
+  const result = report[selected];
+  const target = $("agentAvailability");
+  target.className = `agent-availability ${result?.installed ? "ready" : "missing"}`;
+  target.textContent = result?.installed
+    ? `✓ 已发现 ${agentLabel(selected)}：${result.version || "可用"}`
+    : `— 未发现 ${agentLabel(selected)}，请先在本机安装并完成登录。`;
+}
+
+function renderCloud(config) {
+  const paired = Boolean(config.paired);
+  const connectionPill = $("connectionPill");
+  connectionPill.className = `status-pill ${paired ? "running" : "neutral"}`;
+  connectionPill.textContent = paired ? `已连接 · ${config.name || "本机设备"}` : "尚未连接";
+  $("cloudState").textContent = paired ? "已连接" : "尚未连接";
+  $("cloudDescription").textContent = paired
+    ? "设备已进入云端任务队列，可以领取网站分配的建模任务。"
+    : "连接后，这台设备才能领取网站分配的建模任务。";
+  $("cloudSiteLabel").textContent = config.site || "尚未设置云端地址";
+  for (const id of ["topOpenSiteButton", "heroOpenSiteButton", "openSiteButton"]) $(id).disabled = !config.site;
 }
 
 function renderRunner(runner) {
   const badge = $("runnerBadge");
-  badge.className = `badge ${runner.running ? "running" : "idle"}`;
-  badge.textContent = runner.running ? `Runner 运行中 · ${runner.agent === "claude" ? "Claude Code" : "Codex"}` : "Runner 未启动";
-  $("startButton").disabled = runner.running;
+  badge.className = `status-pill ${runner.running ? "running" : "neutral"}`;
+  badge.textContent = runner.running
+    ? `运行中 · ${agentLabel(runner.agent)}`
+    : "未启动";
+  $("startButton").disabled = runner.running || startingRunner || environmentBusy;
   $("stopButton").disabled = !runner.running;
   if (runner.output?.length) $("runnerLog").textContent = runner.output.join("\n");
+}
+
+function renderStatus(payload) {
+  latestStatus = payload;
+  const { config, report, runner } = payload;
+  if (config.agent) $("agent").value = config.agent;
+  if (config.site) $("site").value = config.site;
+  renderEnvironment(report);
+  renderAgentAvailability(report);
+  renderCloud(config);
+  renderRunner(runner);
 }
 
 async function refresh() {
@@ -64,11 +116,54 @@ async function refresh() {
   }
 }
 
-$("refreshButton").addEventListener("click", refresh);
-$("pairButton").addEventListener("click", async () => {
+function openPairing() {
+  if (latestStatus?.config.site) $("site").value = latestStatus.config.site;
+  setPairingMessage("");
+  const dialog = $("pairingDialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+function closePairing() {
+  const dialog = $("pairingDialog");
+  if (dialog.open) dialog.close();
+}
+
+async function openSite() {
+  try {
+    await api.openSite();
+    setMessage("已打开云端建模系统。");
+  } catch (error) {
+    setMessage(error.message || String(error), true);
+  }
+}
+
+async function prepareEnvironment() {
+  if (environmentBusy) return;
+  environmentBusy = true;
+  $("repairEnvironmentButton").disabled = true;
+  $("environmentProgress").textContent = "正在准备环境，请不要关闭软件…";
+  setMessage("正在安装或修复本机建模环境…");
+  renderRunner(latestStatus?.runner || { running: false });
+  try {
+    const result = await api.prepareEnvironment();
+    if (result?.status) renderStatus(result.status);
+    $("environmentProgress").textContent = "工作环境已准备完成，可以重新刷新状态或启动 Runner。";
+    setMessage("本机建模环境已准备完成。");
+  } catch (error) {
+    $("environmentProgress").textContent = `准备失败：${error.message || error}`;
+    setMessage(error.message || String(error), true);
+  } finally {
+    environmentBusy = false;
+    $("repairEnvironmentButton").disabled = false;
+    if (latestStatus) renderRunner(latestStatus.runner);
+  }
+}
+
+async function submitPairing(event) {
+  event.preventDefault();
   const button = $("pairButton");
   button.disabled = true;
-  setMessage("正在验证配对码并保存本机安全凭据…");
+  setPairingMessage("正在验证配对码并保存本机安全凭据…");
   try {
     const result = await api.pair({
       site: $("site").value.trim(),
@@ -77,31 +172,59 @@ $("pairButton").addEventListener("click", async () => {
       name: $("deviceName").value.trim(),
       agent: $("agent").value,
     });
+    $("code").value = "";
     $("siteAuth").value = "";
-    setMessage(`配对成功：${result.response.name || "设备已连接"}`);
     renderStatus(result.status);
+    closePairing();
+    setMessage(`连接成功：${result.response.name || "设备已连接"}`);
   } catch (error) {
-    setMessage(error.message || String(error), true);
+    setPairingMessage(error.message || String(error), true);
   } finally {
     button.disabled = false;
   }
-});
+}
 
-$("startButton").addEventListener("click", async () => {
+async function startRunner() {
+  if (startingRunner) return;
+  startingRunner = true;
+  renderRunner(latestStatus?.runner || { running: false });
+  setMessage("正在启动本地 Runner…");
   try {
     const state = await api.startRunner({ agent: $("agent").value });
+    if (latestStatus) latestStatus.runner = state;
     renderRunner(state);
-    addLog(`已启动 ${state.agent === "claude" ? "Claude Code" : "Codex"} Runner。`);
+    addLog(`已启动 ${agentLabel(state.agent)} Runner。`);
+    setMessage("本地 Runner 已启动，正在等待云端任务。");
   } catch (error) {
     setMessage(error.message || String(error), true);
     addLog(`启动失败：${error.message || error}`);
+  } finally {
+    startingRunner = false;
+    if (latestStatus) renderRunner(latestStatus.runner);
   }
-});
+}
 
-$("stopButton").addEventListener("click", async () => {
+async function stopRunner() {
   const state = await api.stopRunner();
+  if (latestStatus) latestStatus.runner = state;
   renderRunner(state);
   addLog("已请求停止 Runner。已有任务会由网站按失败/超时策略处理。");
+}
+
+$("refreshButton").addEventListener("click", refresh);
+$("repairEnvironmentButton").addEventListener("click", prepareEnvironment);
+$("heroPairButton").addEventListener("click", openPairing);
+$("openPairingButton").addEventListener("click", openPairing);
+$("topOpenSiteButton").addEventListener("click", openSite);
+$("heroOpenSiteButton").addEventListener("click", openSite);
+$("openSiteButton").addEventListener("click", openSite);
+$("closePairingButton").addEventListener("click", closePairing);
+$("cancelPairingButton").addEventListener("click", closePairing);
+$("pairingForm").addEventListener("submit", submitPairing);
+$("startButton").addEventListener("click", startRunner);
+$("stopButton").addEventListener("click", stopRunner);
+$("agent").addEventListener("change", () => {
+  if (latestStatus) renderAgentAvailability(latestStatus.report);
 });
 
 api.onRunnerEvent((event) => {
@@ -109,7 +232,18 @@ api.onRunnerEvent((event) => {
   if (event.type === "started") addLog(`Runner 已启动，使用 ${event.agentLabel}。`);
   if (event.type === "stopped") addLog(`Runner 已停止（退出码 ${event.code ?? "未知"}）。`);
   if (event.type === "error") setMessage(event.message, true);
-  if (["started", "stopped"].includes(event.type)) api.runnerStatus().then(renderRunner);
+  if (["started", "stopped"].includes(event.type)) {
+    api.runnerStatus().then((state) => {
+      if (latestStatus) latestStatus.runner = state;
+      renderRunner(state);
+    });
+  }
+});
+
+api.onEnvironmentEvent((event) => {
+  if (event.type === "progress") $("environmentProgress").textContent = event.message;
+  if (event.type === "complete" && event.status) renderStatus(event.status);
+  if (event.type === "error") $("environmentProgress").textContent = `准备失败：${event.message}`;
 });
 
 refresh();
