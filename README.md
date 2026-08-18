@@ -64,6 +64,16 @@ npm run desktop:dist
 
 Electron 主进程使用窄 IPC 接口处理文件、配对和 Runner；渲染页面没有 Node 集成。项目要求外部 Node.js 24 运行时，桌面壳不会把 Electron 内置 Node 当作建模 Runner 运行时。
 
+## 下载可安装包
+
+公开 Release 会提供目标平台原生安装包：
+
+- macOS：`.dmg`
+- Windows：`.exe`
+- `SHA256SUMS.txt`：安装包校验值
+
+当前 Release 使用未签名构建。macOS 首次打开可能需要在“系统设置 → 隐私与安全性”中允许，Windows 可能显示 SmartScreen 提示；这不代表安装包包含网站授权或 Agent 登录信息。正式分发前应补充 Apple Developer 签名/公证和 Windows 代码签名证书。
+
 ## 从网站配对
 
 1. 在私有网站登录后生成 Runner 一次性配对码。
