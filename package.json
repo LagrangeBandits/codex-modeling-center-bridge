@@ -1,0 +1,22 @@
+{
+  "name": "codex-modeling-center-bridge",
+  "version": "0.1.0",
+  "description": "Cross-platform local Codex bridge for the private CAD modeling center",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "codex-modeling-bridge": "./src/cli.mjs"
+  },
+  "scripts": {
+    "check": "node --check src/cli.mjs && node --check src/runner.mjs && node --check src/codex-session.mjs",
+    "test": "node --test",
+    "doctor": "node src/cli.mjs doctor",
+    "start": "node src/cli.mjs start"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.147.0"
+  }
+}
