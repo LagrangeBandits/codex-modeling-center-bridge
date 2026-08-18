@@ -7,6 +7,8 @@ Private site (task queue + R2 delivery)
         └── Windows Bridge ── local Codex SDK ── CadQuery/OpenCascade
 ```
 
+The bootstrap path is user-scoped. Node 24 and uv are kept under the bridge's application data directory when they are missing; uv then manages a Python 3.11 runtime, and CadQuery is installed only inside the bridge's virtual environment. System Python, Codex login state, and OS credential stores are not overwritten.
+
 ## Task lifecycle
 
 1. The owner creates a short-lived pairing code in the private site.

@@ -1,10 +1,26 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { defaultModelingEnvironment, DEFAULT_CAD_PACKAGE, DEFAULT_NODE_VERSION, DEFAULT_PYTHON_VERSION, isSupportedNodeVersion } from "./constants.mjs";
+import { appDataDirectory, defaultModelingEnvironment, DEFAULT_CAD_PACKAGE, DEFAULT_NODE_VERSION, DEFAULT_PYTHON_VERSION, DEFAULT_UV_VERSION, isSupportedNodeVersion } from "./constants.mjs";
 import { commandVersion, execFileText, runCommand } from "./process.mjs";
 
 const MIN_PYTHON_MAJOR = 3;
 const MIN_PYTHON_MINOR = 11;
+
+function uvExecutableName() {
+  return process.platform === "win32" ? "uv.exe" : "uv";
+}
+
+function uvRuntimeDirectory() {
+  return path.join(appDataDirectory(), "runtime", "uv");
+}
+
+function uvPythonDirectory() {
+  return path.join(appDataDirectory(), "runtime", "python");
+}
+
+function uvPythonBinDirectory() {
+  return path.join(appDataDirectory(), "runtime", "python-bin");
+}
 
 function pythonCandidates() {
   if (process.platform === "win32") {
@@ -34,6 +50,15 @@ async function runnable(spec, args = ["--version"]) {
     const version = (result.stdout || result.stderr).trim().split(/\r?\n/)[0];
     if (!isSupportedPythonVersion(version)) return null;
     return { ...spec, version };
+  } catch {
+    return null;
+  }
+}
+
+async function executableVersion(file) {
+  try {
+    const result = await execFileText(file, ["--version"], { timeout: 20_000 });
+    return { file, args: [], version: (result.stdout || result.stderr).trim().split(/\r?\n/)[0] || "可用" };
   } catch {
     return null;
   }
@@ -93,9 +118,21 @@ async function checkCodex() {
   return { installed: Boolean(version), version };
 }
 
+async function findUv() {
+  const candidates = [
+    uvExecutableName(),
+    path.join(uvRuntimeDirectory(), uvExecutableName()),
+  ];
+  for (const candidate of candidates) {
+    const found = await executableVersion(candidate);
+    if (found) return found;
+  }
+  return null;
+}
+
 async function checkUv() {
-  const version = await commandVersion(process.platform === "win32" ? "uv.exe" : "uv");
-  return { installed: Boolean(version), version };
+  const found = await findUv();
+  return { installed: Boolean(found), version: found?.version || null };
 }
 
 export async function inspectEnvironment(config = {}) {
@@ -122,6 +159,15 @@ export async function inspectEnvironment(config = {}) {
 async function installPythonRuntimeIfPossible() {
   const existing = await findPython();
   if (existing) return existing;
+
+  let uvError = null;
+  try {
+    const uv = await installUvRuntimeIfPossible();
+    const uvPython = await installPythonWithUv(uv);
+    if (uvPython) return uvPython;
+  } catch (error) {
+    uvError = error instanceof Error ? error.message : String(error);
+  }
 
   if (process.platform === "darwin") {
     const brew = await commandVersion("brew");
@@ -161,8 +207,85 @@ async function installPythonRuntimeIfPossible() {
   }
 
   throw new Error(
-    "未发现 Python 3.11+。请先安装 Python 3.11 或更高版本，或在 macOS 安装 Homebrew、Windows 安装并启用 WinGet 后再次运行 bootstrap。",
+    `未发现 Python 3.11+，且无法通过用户目录运行时自动准备。${uvError ? ` uv: ${uvError}` : ""} 请检查网络后重试，或在 macOS 安装 Homebrew、Windows 安装并启用 WinGet。`,
   );
+}
+
+function quotePowerShell(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+async function installUvRuntimeIfPossible() {
+  const existing = await findUv();
+  if (existing) return existing;
+
+  const runtimeDirectory = uvRuntimeDirectory();
+  const installerPath = path.join(appDataDirectory(), "runtime", process.platform === "win32" ? "uv-install.ps1" : "uv-install.sh");
+  await fs.mkdir(runtimeDirectory, { recursive: true });
+
+  if (process.platform === "win32") {
+    const shell = process.env.SystemRoot ? "powershell.exe" : "pwsh";
+    const download = await runCommand(shell, [
+      "-NoProfile", "-NonInteractive", "-Command",
+      "$ErrorActionPreference='Stop'; " +
+      `Invoke-WebRequest -UseBasicParsing -MaximumRedirection 5 -Uri ${quotePowerShell(`https://astral.sh/uv/${DEFAULT_UV_VERSION}/install.ps1`)} -OutFile ${quotePowerShell(installerPath)}`,
+    ]);
+    if (download.code !== 0) throw new Error(download.stderr.trim() || "下载 uv 安装程序失败。");
+    try {
+      const installed = await runCommand(shell, [
+        "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installerPath,
+      ], {
+        env: {
+          UV_UNMANAGED_INSTALL: runtimeDirectory,
+          UV_NO_MODIFY_PATH: "1",
+        },
+      });
+      if (installed.code !== 0) throw new Error(installed.stderr.trim() || "安装 uv 失败。");
+    } finally {
+      await fs.rm(installerPath, { force: true });
+    }
+  } else {
+    const download = await runCommand("curl", [
+      "--fail", "--location", "--proto", "=https", "--tlsv1.2", "--silent", "--show-error",
+      "--output", installerPath, `https://astral.sh/uv/${DEFAULT_UV_VERSION}/install.sh`,
+    ]);
+    if (download.code !== 0) throw new Error(download.stderr.trim() || "下载 uv 安装程序失败。");
+    try {
+      const installed = await runCommand("sh", [installerPath], {
+        env: {
+          UV_UNMANAGED_INSTALL: runtimeDirectory,
+          UV_NO_MODIFY_PATH: "1",
+        },
+      });
+      if (installed.code !== 0) throw new Error(installed.stderr.trim() || "安装 uv 失败。");
+    } finally {
+      await fs.rm(installerPath, { force: true });
+    }
+  }
+
+  const installed = await findUv();
+  if (!installed) throw new Error("uv 安装后仍未找到可执行文件。");
+  return installed;
+}
+
+async function installPythonWithUv(uv) {
+  if (!uv) return null;
+  const pythonDirectory = uvPythonDirectory();
+  const pythonBinDirectory = uvPythonBinDirectory();
+  await fs.mkdir(pythonDirectory, { recursive: true });
+  await fs.mkdir(pythonBinDirectory, { recursive: true });
+  const env = {
+    UV_PYTHON_INSTALL_DIR: pythonDirectory,
+    UV_PYTHON_BIN_DIR: pythonBinDirectory,
+  };
+  const install = await runCommand(uv, ["python", "install", DEFAULT_PYTHON_VERSION], { env });
+  if (install.code !== 0) throw new Error(install.stderr.trim() || "uv 安装 Python 3.11 失败。");
+  const found = await execFileText(uv.file, ["python", "find", `>=${DEFAULT_PYTHON_VERSION}`], { env, timeout: 20_000 });
+  const pythonPath = found.stdout.trim().split(/\r?\n/).pop();
+  if (!pythonPath) throw new Error("uv 已安装 Python，但没有返回可执行路径。");
+  const runtime = await runnable({ file: pythonPath, args: [] });
+  if (!runtime) throw new Error("uv 返回的 Python 版本不满足 3.11+。");
+  return runtime;
 }
 
 async function createVirtualEnvironment(python, environmentDirectory) {

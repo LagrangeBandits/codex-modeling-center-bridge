@@ -6,6 +6,7 @@ export const CONFIG_VERSION = 1;
 export const DEFAULT_AGENT = "codex";
 export const SUPPORTED_AGENTS = new Set(["codex"]);
 export const DEFAULT_NODE_VERSION = "24";
+export const DEFAULT_UV_VERSION = "0.12.0";
 export const DEFAULT_CAD_PACKAGE = "cadquery>=2.4,<3";
 export const DEFAULT_PYTHON_VERSION = "3.11";
 export const DEFAULT_POLL_INTERVAL_MS = 3_000;

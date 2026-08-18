@@ -23,7 +23,7 @@
 
 ## 新设备安装
 
-安装脚本会优先使用已有 Node.js 24+；如果设备完全没有 Node.js，就把固定版本的官方 Node.js 24 运行时下载到当前用户目录并校验 SHA-256，不写入系统目录、不要求管理员权限。随后脚本创建独立 Python 3.11+ 虚拟环境并安装 CadQuery。首次安装需要网络访问和明确的 `--yes` 确认。
+安装脚本会优先使用已有 Node.js 24+；如果设备完全没有 Node.js，就把固定版本的官方 Node.js 24 运行时下载到当前用户目录并校验 SHA-256，不写入系统目录、不要求管理员权限。随后程序优先使用已有 Python 3.11+；若没有，会在用户目录准备固定版本的 uv，并用 uv 管理 Python 3.11，再创建独立虚拟环境安装 CadQuery。首次安装需要网络访问和明确的 `--yes` 确认。
 
 建模桥不会代替用户登录 Codex。新设备还需要按 [OpenAI 官方 Codex CLI 文档](https://learn.chatgpt.com/docs/codex/cli) 安装并首次运行 `codex`，在设备上完成自己的 ChatGPT 登录；不会复制任何现有设备的登录状态、Cookie 或 `~/.codex` 数据。
 
@@ -45,7 +45,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install-windows.ps1
 ```
 
-安装脚本会运行 `npm ci`，准备用户目录 Node 运行时，然后创建独立 Python 环境并安装 CadQuery。macOS 没有 Python 3.11+ 时会尝试使用已有 Homebrew；Windows 会尝试使用已有 WinGet。首次安装可能需要网络、系统包管理器或用户确认。
+安装脚本会运行 `npm ci`，准备用户目录 Node 运行时，然后创建独立 Python 环境并安装 CadQuery。没有 Python 3.11+ 时，程序优先使用用户目录 uv；uv 不可用时，macOS 会尝试 Homebrew，Windows 会尝试 WinGet。首次安装可能需要网络、系统包管理器或用户确认。
 
 也可以分步执行：
 
