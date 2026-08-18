@@ -136,6 +136,7 @@ h2 { margin-bottom: 0; font-size: 22px; letter-spacing: -.035em; }
   box-shadow: 0 18px 50px rgba(0, 0, 0, .16);
 }
 .environment-card, .workflow-grid .runner-card { grid-column: 1 / -1; }
+.workflow-grid .cloud-card { grid-column: 1 / -1; }
 .section-heading, .runner-toolbar, .cloud-content, .environment-footer { display: flex; align-items: center; justify-content: space-between; gap: 22px; }
 .section-heading { margin-bottom: 16px; }
 .compact-heading { margin-bottom: 10px; }
@@ -158,9 +159,10 @@ select { cursor: pointer; }
 .hint, .muted { color: var(--muted); }
 .hint { margin: 14px 0 0; font-size: 11px; line-height: 1.55; }
 .state-label { padding: 8px 11px; }
-.cloud-content { align-items: flex-end; padding-top: 2px; }
+.cloud-content { min-width: 0; align-items: flex-end; padding-top: 2px; }
+.cloud-content > div:first-child { min-width: 0; }
 .cloud-site { max-width: 660px; margin: 10px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.cloud-actions { flex: 0 0 auto; }
+.cloud-actions { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
 .runner-toolbar { align-items: flex-end; }
 .runner-toolbar .section-intro { max-width: 670px; }
 .log-panel { margin-top: 18px; border-top: 1px solid rgba(55, 78, 109, .45); padding-top: 14px; }
@@ -183,6 +185,10 @@ footer { padding: 22px 0 0; color: #74859d; font-size: 11px; text-align: center;
   .hero-panel { width: 100%; flex-basis: auto; }
   .workflow-grid { grid-template-columns: 1fr; }
   .environment-card, .workflow-grid .runner-card { grid-column: auto; }
+  .workflow-grid .cloud-card { grid-column: auto; }
+  .cloud-content { align-items: flex-start; flex-direction: column; }
+  .cloud-actions { width: 100%; justify-content: flex-start; }
+  .cloud-actions .button { flex: 1 1 220px; }
 }
 @media (max-width: 760px) {
   body { min-width: 0; }
