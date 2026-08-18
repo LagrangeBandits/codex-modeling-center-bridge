@@ -30,6 +30,14 @@ export function normalizeAgent(value, fallback = DEFAULT_AGENT) {
   return agent;
 }
 
+export function resolveTaskAgent(value, fallback = DEFAULT_AGENT) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized || normalized === "any" || normalized === "auto" || normalized === "automatic") {
+    return normalizeAgent(fallback);
+  }
+  return normalizeAgent(normalized);
+}
+
 export function agentLabel(value) {
   return AGENT_LABELS[normalizeAgent(value)] || String(value);
 }

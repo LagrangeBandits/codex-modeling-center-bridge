@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { agentLabel, defaultTaskDirectory, DEFAULT_POLL_INTERVAL_MS, isSafeTaskId, normalizeAgent, platformLabel } from "./constants.mjs";
+import { agentLabel, defaultTaskDirectory, DEFAULT_POLL_INTERVAL_MS, isSafeTaskId, normalizeAgent, platformLabel, resolveTaskAgent } from "./constants.mjs";
 import { collectArtifacts, hasCadArtifact } from "./artifacts.mjs";
 import { runAgentTurn, sessionReference } from "./agent-session.mjs";
 import { loadSession, prepareTaskDirectory, redactForLog } from "./codex-session.mjs";
@@ -19,7 +19,7 @@ async function report(config, taskId, stage, progress, message) {
 
 async function runTask(config, task) {
   if (!isSafeTaskId(task?.id)) throw new Error("网站返回了不安全的任务 ID，已拒绝写入本地工作区。");
-  const selectedAgent = normalizeAgent(task?.agent || config.agent);
+  const selectedAgent = resolveTaskAgent(task?.agent, config.agent);
   if (task?.agent && selectedAgent !== config.agent) {
     throw new Error(`任务要求使用 ${agentLabel(selectedAgent)}，但本机已配对为 ${agentLabel(config.agent)}。请让网站把任务分配给匹配的设备，或重新配对。`);
   }

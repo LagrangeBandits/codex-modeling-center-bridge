@@ -34,6 +34,8 @@ export function commandPathEntries() {
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/opt/local/bin",
+        "/Applications/ChatGPT.app/Contents/Resources",
+        homePath("Applications", "ChatGPT.app", "Contents", "Resources"),
         homePath(".local", "bin"),
         homePath(".npm-global", "bin"),
         homePath(".volta", "bin"),

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
 import { normalizeSite } from "../src/site-client.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
-import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent } from "../src/constants.mjs";
+import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, resolveTaskAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
 import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs";
 
@@ -47,6 +47,9 @@ test("supports selectable local modeling agents", () => {
   assert.equal(normalizeAgent("Claude"), "claude");
   assert.equal(agentLabel("claude"), "Claude Code");
   assert.throws(() => normalizeAgent("unknown"), /可选值为 codex 或 claude/);
+  assert.equal(resolveTaskAgent("any", "claude"), "claude");
+  assert.equal(resolveTaskAgent("auto", "codex"), "codex");
+  assert.equal(resolveTaskAgent("codex", "claude"), "codex");
 });
 
 test("parses Claude stream-json events without executing a CLI", () => {
