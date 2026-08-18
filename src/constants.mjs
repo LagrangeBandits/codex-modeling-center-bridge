@@ -4,7 +4,11 @@ import path from "node:path";
 export const APP_NAME = "Codex Modeling Center Bridge";
 export const CONFIG_VERSION = 1;
 export const DEFAULT_AGENT = "codex";
-export const SUPPORTED_AGENTS = new Set(["codex"]);
+export const SUPPORTED_AGENTS = new Set(["codex", "claude"]);
+export const AGENT_LABELS = {
+  codex: "Codex",
+  claude: "Claude Code",
+};
 export const DEFAULT_NODE_VERSION = "24";
 export const DEFAULT_UV_VERSION = "0.12.0";
 export const DEFAULT_CAD_PACKAGE = "cadquery>=2.4,<3";
@@ -15,6 +19,18 @@ export const DEFAULT_WORKSPACE_NAME = "CodexModelingWorkspace";
 export function isSupportedNodeVersion(value) {
   const match = String(value ?? "").match(/(?:v)?(\d+)(?:\.\d+)?(?:\.\d+)?/);
   return Boolean(match && Number(match[1]) >= Number(DEFAULT_NODE_VERSION));
+}
+
+export function normalizeAgent(value, fallback = DEFAULT_AGENT) {
+  const agent = String(value || fallback).trim().toLowerCase();
+  if (!SUPPORTED_AGENTS.has(agent)) {
+    throw new Error(`不支持的本地 Agent：${value}。可选值为 codex 或 claude。`);
+  }
+  return agent;
+}
+
+export function agentLabel(value) {
+  return AGENT_LABELS[normalizeAgent(value)] || String(value);
 }
 
 export function platformId() {
