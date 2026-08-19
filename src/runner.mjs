@@ -4,10 +4,10 @@ import path from "node:path";
 import { agentLabel, BRIDGE_VERSION, defaultTaskDirectory, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, isSafeTaskId, normalizeAgent, normalizeExecutionMode, platformId, platformLabel, resolveTaskAgent } from "./constants.mjs";
 import { collectArtifacts, hasCadArtifact } from "./artifacts.mjs";
 import { runAgentTurn, sessionReference } from "./agent-session.mjs";
-import { identityFromEvent, loadLocalAgentIdentity } from "./agent-identity.mjs";
+import { identityFromEvent, identityFromEvents, loadLocalAgentIdentity } from "./agent-identity.mjs";
 import { loadSession, prepareTaskDirectory, redactForLog } from "./codex-session.mjs";
 import { loadConfig } from "./state.mjs";
-import { completeTask, pollTask, sendEvent, sendHeartbeat, uploadArtifact } from "./site-client.mjs";
+import { completeTask, pollTask, reportTaskUsage, sendEvent, sendHeartbeat, uploadArtifact } from "./site-client.mjs";
 import { sleep } from "./process.mjs";
 import { extractUsageFromEvent, usagePayload } from "./usage.mjs";
 import { collectSystemMetrics, heartbeatPayload } from "./heartbeat.mjs";
@@ -121,7 +121,7 @@ async function runTaskInternal(config, task, execution) {
 
   await report(config, task.id, "delivering", 88, `发现 ${artifacts.length} 个交付文件，正在上传到私有对象存储。`, telemetry);
   for (const file of artifacts) {
-    await uploadArtifact(config, task.id, path.basename(file), await fs.readFile(file));
+    await uploadArtifact(config, task.id, path.basename(file), await fs.readFile(file), task.maxArtifactBytes);
   }
   await completeTask(config, task.id, "completed", summary, "", telemetry);
   console.log(`任务完成：${task.id} · ${selectedAgentLabel} 本地会话 ${sessionReference(result) || "未返回"}`);
@@ -280,6 +280,35 @@ export async function resumeLocalConversation(taskDirectory, message, config) {
   });
   console.log(`已继续 ${agentLabel(selectedAgent)} 本地会话：${sessionReference(result)}`);
   return task;
+}
+
+export async function reconcileLocalUsage(config, taskId) {
+  if (!isSafeTaskId(taskId)) throw new Error("任务 ID 只能包含字母、数字、点、下划线和连字符，且长度不超过 128。");
+  const taskDirectory = defaultTaskDirectory(config.workspace, taskId);
+  const session = await loadSession(taskDirectory);
+  const selectedAgent = normalizeAgent(session?.agent || config.agent);
+  let rawEvents;
+  try {
+    rawEvents = await fs.readFile(path.join(taskDirectory, "events.jsonl"), "utf8");
+  } catch {
+    throw new Error("本地任务没有 events.jsonl，无法从 Agent 事件补回用量。");
+  }
+  const events = rawEvents.split(/\r?\n/).filter(Boolean).map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+  const usageResult = extractAgentUsage(selectedAgent, events);
+  if (!usageResult.usage || usageResult.usage.totalTokens == null) {
+    throw new Error(`本地事件中没有可识别的完整 token 用量${usageResult.reason ? `：${usageResult.reason}` : ""}`);
+  }
+  const identity = identityFromEvents(selectedAgent, events, await loadLocalAgentIdentity(selectedAgent, { ...config, agent: selectedAgent }));
+  const telemetry = {
+    provider: identity.provider,
+    model: identity.model,
+    usage: usagePayload(usageResult.usage),
+  };
+  const response = await reportTaskUsage(config, taskId, telemetry);
+  console.log(`已补回任务用量：${taskId} · ${telemetry.provider}/${telemetry.model || "unknown"} · ${telemetry.usage.totalTokens} tokens`);
+  return response;
 }
 
 export async function listLocalSessions(config) {

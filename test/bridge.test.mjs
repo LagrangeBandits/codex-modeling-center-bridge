@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
-import { normalizeSite, siteAgentValue } from "../src/site-client.mjs";
+import { normalizeSite, siteAgentValue, uploadArtifact } from "../src/site-client.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
 import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
@@ -33,6 +33,13 @@ test("only uploads CAD/support files from artifacts", () => {
   assert.equal(uploadable("events.jsonl", "events.jsonl"), false);
   assert.equal(uploadable(".env", "artifacts/.env"), false);
   assert.equal(hasCadArtifact(["/tmp/a.py", "/tmp/a.step"]), true);
+});
+
+test("rejects an oversized artifact before opening an upload request", async () => {
+  await assert.rejects(
+    () => uploadArtifact({ site: "https://example.test" }, "task-1", "model.step", Buffer.alloc(6), 5),
+    (error) => error?.status === 413 && /model\.step/.test(error.message) && /单文件上限/.test(error.message),
+  );
 });
 
 test("requires the supported local runtimes", () => {

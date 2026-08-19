@@ -5,7 +5,7 @@ import { parseArgs, hasFlag, requiredValue, valueOf } from "./args.mjs";
 import { bootstrapModelingEnvironment, formatDoctor, inspectEnvironment } from "./modeling-env.mjs";
 import { pairSite } from "./site-client.mjs";
 import { configPath, dataDirectory, loadConfig } from "./state.mjs";
-import { listLocalSessions, resumeLocalConversation, startRunner } from "./runner.mjs";
+import { listLocalSessions, reconcileLocalUsage, resumeLocalConversation, startRunner } from "./runner.mjs";
 import { agentLabel, DEFAULT_NODE_VERSION, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, platformLabel } from "./constants.mjs";
 
 function help() {
@@ -21,6 +21,7 @@ Modeling Center Bridge
   codex-modeling-bridge pull                 拉取并执行一条网站任务
   codex-modeling-bridge sessions             查看本机任务绑定的 Agent 会话
   codex-modeling-bridge resume <任务ID> --message "继续验证并修复模型"
+  codex-modeling-bridge reconcile <任务ID>   从本地 events.jsonl 补回 token 用量和账单
 
 说明:
   - 建模 Agent 在本机运行；默认使用 Codex，也可在配对时选择 Claude Code。
@@ -135,6 +136,15 @@ async function commandResume(parsed) {
   await resumeLocalConversation(path.join(config.workspace, "tasks", taskId), message, config);
 }
 
+async function commandReconcile(parsed) {
+  requireSupportedNode();
+  const taskId = parsed.positionals[0];
+  if (!taskId) throw new Error("用法：reconcile <任务ID>");
+  if (!isSafeTaskId(taskId)) throw new Error("任务 ID 只能包含字母、数字、点、下划线和连字符，且长度不超过 128。");
+  const config = await loadConfig();
+  await reconcileLocalUsage(config, taskId);
+}
+
 async function main() {
   const [command = "help", ...rest] = process.argv.slice(2);
   const parsed = parseArgs(rest);
@@ -147,6 +157,7 @@ async function main() {
   if (command === "pull") return commandStart(parsed, true);
   if (command === "sessions") return commandSessions();
   if (command === "resume") return commandResume(parsed);
+  if (command === "reconcile") return commandReconcile(parsed);
   throw new Error(`未知命令：${command}。运行 help 查看用法。`);
 }
 

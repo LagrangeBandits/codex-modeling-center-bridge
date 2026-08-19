@@ -15,7 +15,7 @@ export function siteAgentValue(agent) {
   return normalizeAgent(agent) === "claude" ? "claude-code" : "codex";
 }
 
-async function jsonFromResponse(response) {
+async function jsonFromResponse(response, endpoint = "") {
   const text = await response.text();
   let payload = {};
   try {
@@ -24,7 +24,10 @@ async function jsonFromResponse(response) {
     payload = { error: text.slice(0, 500) };
   }
   if (!response.ok) {
-    const error = new Error(payload.error || `站点请求失败（${response.status}）`);
+    const fallback = response.status === 413 && endpoint.includes("/artifacts")
+      ? "交付文件上传失败：文件超过网站当前单文件上限。请减小或拆分 CAD 文件后重试。"
+      : `站点请求失败（${response.status}）`;
+    const error = new Error(payload.error || fallback);
     error.status = response.status;
     throw error;
   }
@@ -50,7 +53,7 @@ export async function siteRequest(config, endpoint, options = {}) {
     ...options,
     headers,
   });
-  return jsonFromResponse(response);
+  return jsonFromResponse(response, endpoint);
 }
 
 export async function pairSite({ site, code, siteAuth, name, agent = "codex", workspace }) {
@@ -135,7 +138,28 @@ export async function sendHeartbeat(config, heartbeat) {
   });
 }
 
-export async function uploadArtifact(config, taskId, filename, content) {
+export async function reportTaskUsage(config, taskId, telemetry) {
+  const payload = { taskId, ...telemetryPayload(telemetry) };
+  return siteRequest(config, "/api/runner/usage", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+export async function uploadArtifact(config, taskId, filename, content, maxBytes = 25 * 1024 * 1024) {
+  const size = content?.byteLength ?? content?.length ?? 0;
+  if (size <= 0) throw new Error(`交付文件“${path.basename(filename)}”为空，未上传。`);
+  if (Number.isFinite(maxBytes) && size > maxBytes) {
+    const error = new Error(`交付文件“${path.basename(filename)}”大小为 ${formatBytes(size)}，超过当前单文件上限 ${formatBytes(maxBytes)}。请减小或拆分 CAD 文件后重试。`);
+    error.status = 413;
+    error.code = "ARTIFACT_TOO_LARGE";
+    throw error;
+  }
   const form = new FormData();
   form.set("taskId", taskId);
   form.set("artifact", new Blob([content]), path.basename(filename));

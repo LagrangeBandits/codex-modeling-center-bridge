@@ -8,6 +8,7 @@ The bridge intentionally uses the existing private modeling-center runner contra
 | `/api/runner/poll` | GET | Atomically claim one matching queued task |
 | `/api/runner/heartbeat` | POST | Optional device availability and resource heartbeat |
 | `/api/runner/events` | POST | Report planning/modeling/validation/delivery progress |
+| `/api/runner/usage` | POST | Replay a locally stored usage record for a task without changing its task status |
 | `/api/runner/artifacts` | POST multipart | Upload one validated artifact |
 | `/api/runner/complete` | POST | Mark the claimed task completed, planned, or failed |
 
@@ -45,6 +46,8 @@ The bridge may add `provider`, `model`, and `usage` to `/api/runner/events` and 
 `provider` and `model` are resolved from the local Agent response first, then explicit local configuration and known local provider endpoints. The bridge does not infer a provider solely from the selected Agent: `provider` may be `openai`, `openai-compatible`, `deepseek`, `qwen`, `dashscope`, `anthropic`, `anthropic-compatible`, another configured provider name, or `unknown` when the evidence is insufficient. A real model string is preserved when it can be identified safely, even when the provider remains `unknown`. `inputTokens`/`outputTokens` are the normalized input/prompt and output/completion counts. `totalTokens` uses the provider's reported total or the exact sum of reported input and output values. Provider-specific cache and reasoning counts remain separate. When the local terminal response has no reliable token fields, the bridge sends `null` values and writes the reason only to the local log.
 
 The usage payload contains aggregate numeric values and `null` only. It never contains API keys, login state, raw transcripts, complete provider events, or arbitrary provider fields. Unknown `usage` fields must be ignored by the site.
+
+The poll response may include `task.maxArtifactBytes`. The bridge checks each local artifact against that limit before opening an upload request. If a historical task has already finished but its local `events.jsonl` was retained, `codex-modeling-bridge reconcile <task-id>` replays only the normalized provider/model/usage payload to `/api/runner/usage`; the endpoint is ownership-checked and settlement remains idempotent.
 
 ## Optional Runner heartbeat
 
