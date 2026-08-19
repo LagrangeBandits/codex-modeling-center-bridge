@@ -11,6 +11,10 @@ export function normalizeSite(value) {
   return site;
 }
 
+export function siteAgentValue(agent) {
+  return normalizeAgent(agent) === "claude" ? "claude-code" : "codex";
+}
+
 async function jsonFromResponse(response) {
   const text = await response.text();
   let payload = {};
@@ -66,7 +70,7 @@ export async function pairSite({ site, code, siteAuth, name, agent = "codex", wo
         code: String(code).trim().toUpperCase(),
         name: name || undefined,
         platform: platformId(),
-        agent: selectedAgent,
+        agent: siteAgentValue(selectedAgent),
       }),
     },
   );

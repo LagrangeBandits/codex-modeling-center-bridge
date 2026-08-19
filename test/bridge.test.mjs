@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
-import { normalizeSite } from "../src/site-client.mjs";
+import { normalizeSite, siteAgentValue } from "../src/site-client.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
 import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
@@ -47,6 +47,8 @@ test("supports selectable local modeling agents", () => {
   assert.equal(normalizeAgent(undefined), "codex");
   assert.equal(normalizeAgent("Claude"), "claude");
   assert.equal(normalizeAgent("claude-code"), "claude");
+  assert.equal(siteAgentValue("claude"), "claude-code");
+  assert.equal(siteAgentValue("codex"), "codex");
   assert.equal(agentLabel("claude"), "Claude Code");
   assert.throws(() => normalizeAgent("unknown"), /可选值为 codex 或 claude/);
   assert.equal(resolveTaskAgent("any", "claude"), "claude");

@@ -16,7 +16,7 @@ The server remains the source of truth for task ownership. This client does not 
 
 ## Optional local agent
 
-`/api/runner/register` may receive an `agent` field with the value `codex` or `claude`. If the server returns an `agent`, the bridge stores that selection locally and uses it for this runner. A task may also carry an optional `agent`; the runner accepts it only when it matches the agent selected at pairing time, so a device cannot silently run a task with a different local login.
+`/api/runner/register` uses the wire values `codex` or `claude-code`; the bridge also accepts the local alias `claude`. If the server returns an `agent`, the bridge stores that selection locally and uses it for this runner. A task may also carry an optional `agent`; the runner accepts both `claude-code` and the local `claude` alias only when they match the agent selected at pairing time, so a device cannot silently run a task with a different local login.
 
 The site does not receive the Agent's login state, API key, personal chat history, or raw local event stream. It receives only progress, validated artifacts, and the redacted task summary that the bridge places in `artifacts/conversation.md`.
 
