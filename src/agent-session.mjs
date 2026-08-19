@@ -1,10 +1,12 @@
 import { normalizeAgent } from "./constants.mjs";
 import { runClaudeTurn } from "./claude-session.mjs";
 import { runCodexTurn } from "./codex-session.mjs";
-import { agentTelemetry } from "./usage.mjs";
+import { identityFromEvents, loadLocalAgentIdentity } from "./agent-identity.mjs";
+import { usagePayload } from "./usage.mjs";
 
-export async function runAgentTurn({ agent, taskDirectory, prompt, config, previousSession, onEvent }) {
+export async function runAgentTurn({ agent, taskDirectory, prompt, config, previousSession, onEvent, initialIdentity }) {
   const selectedAgent = normalizeAgent(agent || config?.agent);
+  const localIdentity = initialIdentity || await loadLocalAgentIdentity(selectedAgent, config);
   let result;
   if (selectedAgent === "claude") {
     result = await runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent });
@@ -17,7 +19,13 @@ export async function runAgentTurn({ agent, taskDirectory, prompt, config, previ
       onEvent,
     });
   }
-  return { ...result, ...agentTelemetry(selectedAgent, result.events, config?.model, result.usage) };
+  const identity = identityFromEvents(selectedAgent, result.events, localIdentity);
+  return {
+    ...result,
+    provider: identity.provider,
+    model: identity.model,
+    usage: usagePayload(result.usage),
+  };
 }
 
 export function sessionReference(session) {

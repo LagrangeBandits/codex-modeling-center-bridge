@@ -7,6 +7,8 @@ import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, norma
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
 import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs";
 import { extractAgentUsage, usagePayload } from "../src/usage.mjs";
+import { heartbeatPayload } from "../src/heartbeat.mjs";
+import { identityFromEvents, providerFromBaseUrl, providerFromEvent, providerFromModel } from "../src/agent-identity.mjs";
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);
@@ -126,5 +128,55 @@ test("normalizes real Codex and Claude usage without uploading raw fields", () =
     cacheCreationInputTokens: null,
     cacheReadInputTokens: null,
     reasoningOutputTokens: null,
+  });
+});
+
+test("resolves provider from evidence instead of the selected Agent", () => {
+  assert.equal(providerFromModel("deepseek-chat"), "deepseek");
+  assert.equal(providerFromModel("qwen-plus"), "qwen");
+  assert.equal(providerFromModel("gpt-5.4"), null);
+  assert.equal(providerFromBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1"), "dashscope");
+  assert.equal(providerFromBaseUrl("https://example-compatible.test/v1"), "openai-compatible");
+  assert.equal(providerFromEvent({ model_provider: "deepseek" }), "deepseek");
+
+  assert.deepEqual(identityFromEvents("codex", [{ type: "turn.completed", model: "deepseek-chat" }], {}), {
+    provider: "deepseek",
+    model: "deepseek-chat",
+  });
+  assert.deepEqual(identityFromEvents("codex", [], { model: "custom-model", provider: "unknown" }), {
+    provider: "unknown",
+    model: "custom-model",
+  });
+  assert.deepEqual(identityFromEvents("codex", [], { model: "custom-model", baseUrl: "https://api.example.test/v1" }), {
+    provider: "openai-compatible",
+    model: "custom-model",
+  });
+});
+
+test("builds a heartbeat with null-safe metrics and no credentials", () => {
+  assert.deepEqual(heartbeatPayload({
+    runnerId: "runner-1",
+    agent: "claude",
+    provider: "unknown",
+    model: "claude-sonnet-4",
+    softwareVersion: "0.1.2",
+    platform: "unknown",
+    activeTasks: 0,
+    capacity: 1,
+    metrics: { cpuPercent: null, memoryUsedBytes: null, memoryTotalBytes: null, load1m: null },
+  }), {
+    runnerId: "runner-1",
+    platform: "unknown",
+    agent: "claude-code",
+    provider: "unknown",
+    model: "claude-sonnet-4",
+    softwareVersion: "0.1.2",
+    activeTasks: 0,
+    capacity: 1,
+    cpuPercent: null,
+    memoryUsedBytes: null,
+    memoryTotalBytes: null,
+    load1m: null,
+    capabilities: ["task:direct", "task:plan", "agent:claude-code"],
   });
 });

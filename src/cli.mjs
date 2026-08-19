@@ -17,7 +17,7 @@ Modeling Center Bridge
   codex-modeling-bridge bootstrap --yes
   codex-modeling-bridge pair --agent codex|claude --site <站点> --code <配对码> --site-auth <桥接授权>
   codex-modeling-bridge onboard --agent codex|claude --install --yes --site <站点> --code <配对码> --site-auth <桥接授权> --start
-  codex-modeling-bridge start [--agent codex|claude] [--once] [--concurrency 1]
+  codex-modeling-bridge start [--agent codex|claude] [--provider <name>] [--model <name>] [--once] [--concurrency 1]
   codex-modeling-bridge pull                 拉取并执行一条网站任务
   codex-modeling-bridge sessions             查看本机任务绑定的 Agent 会话
   codex-modeling-bridge resume <任务ID> --message "继续验证并修复模型"
@@ -104,6 +104,7 @@ async function commandStart(parsed, once = false) {
   const config = await loadConfig();
   const overrides = {};
   if (valueOf(parsed, "model")) overrides.model = valueOf(parsed, "model");
+  if (valueOf(parsed, "provider")) overrides.provider = valueOf(parsed, "provider");
   if (valueOf(parsed, "reasoning-effort")) overrides.reasoningEffort = valueOf(parsed, "reasoning-effort");
   if (valueOf(parsed, "agent")) overrides.agent = normalizeAgent(valueOf(parsed, "agent"));
   await startRunner({

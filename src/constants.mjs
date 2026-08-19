@@ -1,7 +1,17 @@
 import os from "node:os";
+import { createRequire } from "node:module";
 import path from "node:path";
 
+const require = createRequire(import.meta.url);
+let packageVersion = "unknown";
+try {
+  packageVersion = require("../package.json").version || packageVersion;
+} catch {
+  // Source snapshots without package.json still have a safe version value.
+}
+
 export const APP_NAME = "Codex Modeling Center Bridge";
+export const BRIDGE_VERSION = packageVersion;
 export const CONFIG_VERSION = 1;
 export const DEFAULT_AGENT = "codex";
 export const SUPPORTED_AGENTS = new Set(["codex", "claude"]);
@@ -17,6 +27,7 @@ export const DEFAULT_UV_VERSION = "0.12.0";
 export const DEFAULT_CAD_PACKAGE = "cadquery>=2.4,<3";
 export const DEFAULT_PYTHON_VERSION = "3.11";
 export const DEFAULT_POLL_INTERVAL_MS = 3_000;
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 export const DEFAULT_WORKSPACE_NAME = "CodexModelingWorkspace";
 
 export function isSupportedNodeVersion(value) {

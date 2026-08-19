@@ -118,6 +118,8 @@ node src/cli.mjs start --agent codex --concurrency 1
 
 `pull` 只领取一条任务；长期运行用 `start`。每台机器默认一个并发槽位，只有在本机资源足够时才增加并发。
 
+如果本机使用 OpenAI-compatible、DeepSeek、Qwen/DashScope 或其他兼容后端，可在启动 Runner 时显式提供身份，例如 `node src/cli.mjs start --agent codex --provider deepseek --model deepseek-chat`。不提供且本地响应/配置也无法可靠识别时，网站会收到 `provider: "unknown"`，不会把 Agent 类型冒充成供应商。
+
 ## 本机文件与安全
 
 本机状态位于用户数据目录，而不是仓库：

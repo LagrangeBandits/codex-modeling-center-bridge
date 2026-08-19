@@ -1,14 +1,16 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { agentLabel, defaultTaskDirectory, DEFAULT_POLL_INTERVAL_MS, isSafeTaskId, normalizeAgent, normalizeExecutionMode, platformLabel, resolveTaskAgent } from "./constants.mjs";
+import { agentLabel, BRIDGE_VERSION, defaultTaskDirectory, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, isSafeTaskId, normalizeAgent, normalizeExecutionMode, platformId, platformLabel, resolveTaskAgent } from "./constants.mjs";
 import { collectArtifacts, hasCadArtifact } from "./artifacts.mjs";
 import { runAgentTurn, sessionReference } from "./agent-session.mjs";
+import { identityFromEvent, loadLocalAgentIdentity } from "./agent-identity.mjs";
 import { loadSession, prepareTaskDirectory, redactForLog } from "./codex-session.mjs";
 import { loadConfig } from "./state.mjs";
-import { completeTask, pollTask, sendEvent, uploadArtifact } from "./site-client.mjs";
+import { completeTask, pollTask, sendEvent, sendHeartbeat, uploadArtifact } from "./site-client.mjs";
 import { sleep } from "./process.mjs";
-import { extractUsageFromEvent, modelFromEvent, providerForAgent, usagePayload } from "./usage.mjs";
+import { extractUsageFromEvent, usagePayload } from "./usage.mjs";
+import { collectSystemMetrics, heartbeatPayload } from "./heartbeat.mjs";
 
 async function report(config, taskId, stage, progress, message, telemetry = undefined) {
   try {
@@ -27,12 +29,14 @@ async function runTaskInternal(config, task, execution) {
   }
   const taskConfig = { ...config, agent: selectedAgent, executionMode };
   const selectedAgentLabel = agentLabel(selectedAgent);
+  const initialIdentity = await loadLocalAgentIdentity(selectedAgent, taskConfig);
   const telemetry = {
-    provider: providerForAgent(selectedAgent),
-    model: typeof config.model === "string" && config.model.trim() ? config.model.trim() : null,
+    provider: initialIdentity.provider,
+    model: initialIdentity.model,
     usage: null,
   };
   execution.telemetry = telemetry;
+  execution.onTelemetry?.(telemetry);
   const taskDirectory = defaultTaskDirectory(config.workspace, task.id);
   await prepareTaskDirectory(taskDirectory, task);
   const previousSession = await loadSession(taskDirectory);
@@ -64,12 +68,16 @@ async function runTaskInternal(config, task, execution) {
     ].join("\n"),
     config: taskConfig,
     previousSession,
+    initialIdentity,
     onEvent: async (event) => {
+      const eventIdentity = identityFromEvent(event, { ...telemetry, agent: selectedAgent });
+      if (eventIdentity.provider && eventIdentity.provider !== "unknown") telemetry.provider = eventIdentity.provider;
+      if (eventIdentity.model) telemetry.model = eventIdentity.model;
+      execution.onTelemetry?.(telemetry);
       const eventUsage = extractUsageFromEvent(selectedAgent, event);
-      const eventModel = modelFromEvent(event);
-      if (eventModel) telemetry.model = eventModel;
       if (eventUsage) {
         telemetry.usage = usagePayload(eventUsage.usage);
+        execution.onTelemetry?.(telemetry);
         await report(config, task.id, "validating", 72, `${selectedAgentLabel} 回合完成，正在整理用量和任务结果。`, telemetry);
         return;
       }
@@ -93,9 +101,10 @@ async function runTaskInternal(config, task, execution) {
     },
   });
 
-  telemetry.provider = result.provider || telemetry.provider;
+  if (result.provider && result.provider !== "unknown") telemetry.provider = result.provider;
   telemetry.model = result.model || telemetry.model;
   telemetry.usage = usagePayload(result.usage ?? telemetry.usage);
+  execution.onTelemetry?.(telemetry);
 
   const summary = String(result.finalResponse || (executionMode === "plan"
     ? `${selectedAgentLabel} 已完成建模方案。`
@@ -118,8 +127,8 @@ async function runTaskInternal(config, task, execution) {
   console.log(`任务完成：${task.id} · ${selectedAgentLabel} 本地会话 ${sessionReference(result) || "未返回"}`);
 }
 
-async function runTask(config, task) {
-  const execution = { telemetry: null };
+async function runTask(config, task, onTelemetry = undefined) {
+  const execution = { telemetry: null, onTelemetry };
   try {
     await runTaskInternal(config, task, execution);
   } catch (error) {
@@ -133,9 +142,9 @@ async function runTask(config, task) {
   }
 }
 
-async function runOne(config, task) {
+async function runOne(config, task, onTelemetry = undefined) {
   try {
-    await runTask(config, task);
+    await runTask(config, task, onTelemetry);
   } catch (error) {
     const message = redactForLog(error instanceof Error ? error.message : String(error));
     console.error(`任务失败 ${task.id}：${message}`);
@@ -161,24 +170,95 @@ export async function startRunner(options = {}) {
     console.warn("检测到 OPENAI_API_KEY。若要使用本机 ChatGPT/Codex 登录额度，请先在当前终端取消它。");
   }
   await fs.mkdir(config.workspace, { recursive: true });
-  const concurrency = Math.max(1, Math.min(8, Number(options.concurrency || 1)));
+  const requestedConcurrency = Number(options.concurrency || 1);
+  const concurrency = Number.isFinite(requestedConcurrency)
+    ? Math.max(1, Math.min(8, requestedConcurrency))
+    : 1;
   const active = new Set();
+  const runnerIdentity = await loadLocalAgentIdentity(config.agent, config);
+  const requestedHeartbeatInterval = Number(options.heartbeatIntervalMs || DEFAULT_HEARTBEAT_INTERVAL_MS);
+  const heartbeatIntervalMs = Number.isFinite(requestedHeartbeatInterval)
+    ? Math.max(5_000, requestedHeartbeatInterval)
+    : DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const heartbeatState = {
+    lastSentAt: 0,
+    inFlight: false,
+    pending: false,
+    unsupported: false,
+    previousCpuSnapshot: null,
+  };
+  const absorbTelemetry = (telemetry) => {
+    if (!telemetry) return;
+    if (typeof telemetry.provider === "string" && telemetry.provider.trim() && telemetry.provider !== "unknown") {
+      runnerIdentity.provider = telemetry.provider.trim().slice(0, 80);
+    }
+    if (typeof telemetry.model === "string" && telemetry.model.trim()) {
+      runnerIdentity.model = telemetry.model.trim().slice(0, 160);
+    }
+  };
+  const triggerHeartbeat = (force = false) => {
+    if (heartbeatState.unsupported) return;
+    const now = Date.now();
+    if (heartbeatState.inFlight) {
+      if (force) heartbeatState.pending = true;
+      return;
+    }
+    if (!force && now - heartbeatState.lastSentAt < heartbeatIntervalMs) return;
+    heartbeatState.lastSentAt = now;
+    heartbeatState.inFlight = true;
+    const metrics = collectSystemMetrics(heartbeatState.previousCpuSnapshot);
+    heartbeatState.previousCpuSnapshot = metrics.cpuSnapshot;
+    const payload = heartbeatPayload({
+      runnerId: config.runnerId,
+      platform: config.platform || platformId(),
+      agent: config.agent,
+      provider: runnerIdentity.provider,
+      model: runnerIdentity.model,
+      softwareVersion: BRIDGE_VERSION,
+      activeTasks: active.size,
+      capacity: concurrency,
+      metrics,
+    });
+    Promise.resolve(sendHeartbeat(config, payload))
+      .catch((error) => {
+        if (error?.status === 404 || error?.status === 405) {
+          heartbeatState.unsupported = true;
+          console.warn("站点未提供可选 Runner 心跳接口；继续使用旧版轮询协议。\n");
+          return;
+        }
+        console.warn(`Runner 心跳回传失败（不影响任务轮询）：${redactForLog(error?.message || error)}\n`);
+      })
+      .finally(() => {
+        heartbeatState.inFlight = false;
+        if (heartbeatState.pending && !heartbeatState.unsupported) {
+          heartbeatState.pending = false;
+          triggerHeartbeat(true);
+        }
+      });
+  };
   console.log(`Runner 已启动：${config.name || `${os.hostname()} · ${platformLabel(config.platform)}`}`);
   console.log(`本机 Agent：${agentLabel(config.agent)}`);
   console.log(`任务工作区：${config.workspace}`);
   console.log(`并发槽位：${concurrency}（每台设备默认一次处理一个任务）`);
   console.log("等待私有任务；按 Ctrl+C 停止。\n");
+  triggerHeartbeat(true);
 
   while (true) {
+    triggerHeartbeat();
     while (active.size < concurrency) {
       const payload = await pollTask(config);
       if (!payload.task) break;
-      const taskPromise = runOne(config, payload.task).finally(() => active.delete(taskPromise));
+      const taskPromise = runOne(config, payload.task, absorbTelemetry).finally(() => {
+        active.delete(taskPromise);
+        triggerHeartbeat(true);
+      });
       active.add(taskPromise);
+      triggerHeartbeat(true);
     }
 
     if (options.once) {
       if (active.size) await Promise.allSettled([...active]);
+      triggerHeartbeat(true);
       return;
     }
     await sleep(active.size ? 1_000 : (options.pollIntervalMs || DEFAULT_POLL_INTERVAL_MS));

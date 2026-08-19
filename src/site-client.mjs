@@ -24,7 +24,9 @@ async function jsonFromResponse(response) {
     payload = { error: text.slice(0, 500) };
   }
   if (!response.ok) {
-    throw new Error(payload.error || `站点请求失败（${response.status}）`);
+    const error = new Error(payload.error || `站点请求失败（${response.status}）`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -93,12 +95,14 @@ export async function pairSite({ site, code, siteAuth, name, agent = "codex", wo
 
 function telemetryPayload(telemetry) {
   if (telemetry === null) return { provider: null, model: null, usage: null };
-  const provider = typeof telemetry?.provider === "string" && telemetry.provider.trim()
-    ? telemetry.provider.trim().slice(0, 80)
-    : null;
-  const model = typeof telemetry?.model === "string" && telemetry.model.trim()
-    ? telemetry.model.trim().slice(0, 160)
-    : null;
+  const safeText = (value, limit) => {
+    if (typeof value !== "string" || !value.trim()) return null;
+    const text = value.trim().replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, limit);
+    if (/(?:bearer\s+|sk-[a-z0-9_-]+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=])/i.test(text)) return null;
+    return text;
+  };
+  const provider = safeText(telemetry?.provider, 80);
+  const model = safeText(telemetry?.model, 160);
   return { provider, model, usage: usagePayload(telemetry?.usage) };
 }
 
@@ -121,6 +125,13 @@ export async function completeTask(config, taskId, status, summary = "", error =
   return siteRequest(config, "/api/runner/complete", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function sendHeartbeat(config, heartbeat) {
+  return siteRequest(config, "/api/runner/heartbeat", {
+    method: "POST",
+    body: JSON.stringify(heartbeat),
   });
 }
 

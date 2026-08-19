@@ -115,17 +115,34 @@ export function extractAgentUsage(agent, events) {
 
 function modelName(value) {
   if (typeof value !== "string") return null;
-  const model = value.trim();
-  return model ? model.slice(0, 160) : null;
+  const model = value.trim().replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 160);
+  if (!model || /(?:bearer\s+|sk-[a-z0-9_-]+|api[_-]?key\s*[:=]|password\s*[:=]|secret\s*[:=])/i.test(model)) return null;
+  return model;
 }
 
 export function providerForAgent(agent) {
-  return agent === "claude" || agent === "claude-code" ? "anthropic" : "openai";
+  // Agent identity is not provider identity. A Codex-compatible endpoint may
+  // be OpenAI, DeepSeek, Qwen/DashScope, or another provider; Claude Code may
+  // also be configured against a compatible endpoint. Resolve the provider
+  // from the real event/config evidence instead of guessing from the agent.
+  return "unknown";
 }
 
 export function modelFromEvent(event) {
-  const direct = modelName(event?.model || event?.model_name || event?.modelName || event?.message?.model);
-  if (direct) return direct;
+  const directCandidates = [
+    event?.model,
+    event?.model_name,
+    event?.modelName,
+    event?.message?.model,
+    event?.item?.model,
+    event?.response?.model,
+    event?.output?.model,
+    event?.result && typeof event.result === "object" ? event.result.model : null,
+  ];
+  for (const candidate of directCandidates) {
+    const direct = modelName(candidate);
+    if (direct) return direct;
+  }
 
   // Claude Code may expose modelUsage keyed by model name. Only infer a
   // model when the response names exactly one model; never guess on a mix.
