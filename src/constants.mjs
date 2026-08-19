@@ -5,6 +5,8 @@ export const APP_NAME = "Codex Modeling Center Bridge";
 export const CONFIG_VERSION = 1;
 export const DEFAULT_AGENT = "codex";
 export const SUPPORTED_AGENTS = new Set(["codex", "claude"]);
+export const DEFAULT_EXECUTION_MODE = "direct";
+export const SUPPORTED_EXECUTION_MODES = new Set(["direct", "plan"]);
 export const AGENT_LABELS = {
   codex: "Codex",
   claude: "Claude Code",
@@ -23,7 +25,8 @@ export function isSupportedNodeVersion(value) {
 }
 
 export function normalizeAgent(value, fallback = DEFAULT_AGENT) {
-  const agent = String(value || fallback).trim().toLowerCase();
+  const raw = String(value || fallback).trim().toLowerCase();
+  const agent = raw === "claude-code" ? "claude" : raw;
   if (!SUPPORTED_AGENTS.has(agent)) {
     throw new Error(`不支持的本地 Agent：${value}。可选值为 codex 或 claude。`);
   }
@@ -36,6 +39,14 @@ export function resolveTaskAgent(value, fallback = DEFAULT_AGENT) {
     return normalizeAgent(fallback);
   }
   return normalizeAgent(normalized);
+}
+
+export function normalizeExecutionMode(value, fallback = DEFAULT_EXECUTION_MODE) {
+  const mode = String(value || fallback).trim().toLowerCase();
+  if (!SUPPORTED_EXECUTION_MODES.has(mode)) {
+    throw new Error(`不支持的任务执行模式：${value}。可选值为 direct 或 plan。`);
+  }
+  return mode;
 }
 
 export function agentLabel(value) {

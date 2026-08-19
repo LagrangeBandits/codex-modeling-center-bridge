@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Codex } from "@openai/codex-sdk";
 import { runtimeEnvironment } from "./desktop-runtime.mjs";
 import { environmentPythonPath } from "./modeling-env.mjs";
+import { extractAgentUsage, extractUsageFromEvent, formatUsage } from "./usage.mjs";
 
 const ROOT_DIRECTORY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -57,8 +58,8 @@ function markdownFromEvents({ prompt, threadId, events, finalResponse }) {
   for (const event of events) {
     const item = eventItem(event);
     if (event.type === "turn.completed") {
-      const usage = event.usage;
-      if (usage) lines.push(`- 用量记录：输入 ${usage.input_tokens ?? 0}，缓存 ${usage.cached_input_tokens ?? 0}，输出 ${usage.output_tokens ?? 0}，推理 ${usage.reasoning_output_tokens ?? 0}`);
+      const usage = extractUsageFromEvent("codex", event);
+      if (usage) lines.push(`- 用量记录：${formatUsage(usage.usage)}`);
       continue;
     }
     if (!item) continue;
@@ -87,7 +88,7 @@ function sdkThreadOptions(taskDirectory, config) {
   const options = {
     workingDirectory: taskDirectory,
     skipGitRepoCheck: true,
-    sandboxMode: "workspace-write",
+    sandboxMode: config.executionMode === "plan" ? "read-only" : "workspace-write",
     approvalPolicy: "never",
     networkAccessEnabled: false,
   };
@@ -123,12 +124,14 @@ export async function runCodexTurn({ taskDirectory, prompt, config, previousThre
     .map((event) => event.item.text)
     .pop() || "";
   const threadId = thread.id || previousThreadId || null;
+  const usageResult = extractAgentUsage("codex", events);
+  if (usageResult.reason) console.warn(`Codex 用量未知：${usageResult.reason}`);
   await fs.mkdir(path.join(taskDirectory, "artifacts"), { recursive: true });
   const sanitizedEvents = events.map((event) => sanitize(event));
   await fs.writeFile(path.join(taskDirectory, "events.jsonl"), `${sanitizedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(taskDirectory, "artifacts", "conversation.md"), markdownFromEvents({ prompt, threadId, events, finalResponse }), "utf8");
   await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "codex", threadId, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
-  return { threadId, finalResponse, events };
+  return { threadId, finalResponse, events, usage: usageResult.usage };
 }
 
 export async function prepareTaskDirectory(taskDirectory, task) {

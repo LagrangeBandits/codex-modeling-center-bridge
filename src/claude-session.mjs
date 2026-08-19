@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { runtimeEnvironment } from "./desktop-runtime.mjs";
 import { environmentPythonPath } from "./modeling-env.mjs";
 import { redactForLog } from "./codex-session.mjs";
+import { extractAgentUsage, extractUsageFromEvent, formatUsage } from "./usage.mjs";
 
 const DEFAULT_MAX_TURNS = 50;
 const CLAUDE_SETTINGS_FILENAME = "claude-settings.json";
@@ -113,9 +114,21 @@ function claudePermissionMode(config) {
   return mode;
 }
 
-async function writeClaudeSettings(taskDirectory) {
+async function writeClaudeSettings(taskDirectory, config = {}) {
   const settingsPath = path.join(taskDirectory, CLAUDE_SETTINGS_FILENAME);
-  await fs.writeFile(settingsPath, `${JSON.stringify(cloneSettings(DEFAULT_SETTINGS), null, 2)}\n`, "utf8");
+  const settings = cloneSettings(DEFAULT_SETTINGS);
+  if (config.executionMode === "plan") {
+    settings.permissions.allow = ["Read(./**)", "Glob", "Grep"];
+    settings.permissions.deny = [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(*)",
+      "PowerShell(*)",
+      "WebFetch",
+      "WebSearch",
+    ];
+  }
+  await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   return settingsPath;
 }
 
@@ -129,7 +142,7 @@ function claudeArgs({ taskDirectory, config, previousSession, settingsPath }) {
     "--settings", settingsPath,
     "--setting-sources", "user",
     "--append-system-prompt-file", path.join(taskDirectory, "AGENTS.md"),
-    "--tools", "Read,Glob,Grep,Edit,Write,Bash,PowerShell",
+    "--tools", config.executionMode === "plan" ? "Read,Glob,Grep" : "Read,Glob,Grep,Edit,Write,Bash,PowerShell",
     "--permission-mode", claudePermissionMode(config),
   ];
   if (previousSession?.sessionId) args.push("--resume", previousSession.sessionId);
@@ -161,8 +174,8 @@ function markdownFromEvents({ prompt, sessionId, events, finalResponse }) {
         : [];
       if (tools.length) lines.push(`- 工具调用：${redactForLog(tools.join(", "))}`);
     } else if (event.type === "result") {
-      const usage = event.usage;
-      if (usage) lines.push(`- 用量记录：输入 ${usage.input_tokens ?? 0}，输出 ${usage.output_tokens ?? 0}`);
+      const usage = extractUsageFromEvent("claude", event);
+      if (usage) lines.push(`- 用量记录：${formatUsage(usage.usage)}`);
       if (event.is_error) lines.push(`- Agent 错误：${redactForLog(event.result || event.subtype || "未知错误")}`);
     }
   }
@@ -242,7 +255,7 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
 
 export async function runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent }) {
   await fs.mkdir(path.join(taskDirectory, "artifacts"), { recursive: true });
-  const settingsPath = await writeClaudeSettings(taskDirectory);
+  const settingsPath = await writeClaudeSettings(taskDirectory, config);
   const result = await runClaudeProcess({
     taskDirectory,
     prompt,
@@ -253,11 +266,15 @@ export async function runClaudeTurn({ taskDirectory, prompt, config, previousSes
 
   const sessionId = [...result.events].reverse().map(sessionIdFromEvent).find(Boolean) || previousSession?.sessionId || null;
   const resultEvent = [...result.events].reverse().find((event) => event.type === "result");
+  const usageResult = extractAgentUsage("claude", result.events);
+  if (usageResult.reason) console.warn(`Claude Code 用量未知：${usageResult.reason}`);
   const finalResponse = resultEvent?.result || [...result.events].reverse().map(claudeEventText).find(Boolean) || "";
   const failed = result.code !== 0 || result.signal || resultEvent?.is_error || (resultEvent && resultEvent.subtype && resultEvent.subtype !== "success");
   if (failed) {
     const detail = resultEvent?.result || result.stderr.trim() || resultEvent?.subtype || `退出码 ${result.code}`;
-    throw new Error(`Claude Code 执行失败：${redactForLog(detail).slice(0, 4_000)}`);
+    const error = new Error(`Claude Code 执行失败：${redactForLog(detail).slice(0, 4_000)}`);
+    error.usage = usageResult.usage;
+    throw error;
   }
   if (!sessionId) throw new Error("Claude Code 未返回本地会话 ID，无法安全绑定到网站任务。");
 
@@ -265,5 +282,5 @@ export async function runClaudeTurn({ taskDirectory, prompt, config, previousSes
   await fs.writeFile(path.join(taskDirectory, "events.jsonl"), `${sanitizedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(taskDirectory, "artifacts", "conversation.md"), markdownFromEvents({ prompt, sessionId, events: result.events, finalResponse }), "utf8");
   await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "claude", sessionId, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
-  return { agent: "claude", sessionId, finalResponse, events: result.events };
+  return { agent: "claude", sessionId, finalResponse, events: result.events, usage: usageResult.usage };
 }

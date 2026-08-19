@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
 import { normalizeSite } from "../src/site-client.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
-import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, resolveTaskAgent } from "../src/constants.mjs";
+import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
 import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs";
+import { extractAgentUsage, usagePayload } from "../src/usage.mjs";
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);
@@ -45,11 +46,15 @@ test("requires the supported local runtimes", () => {
 test("supports selectable local modeling agents", () => {
   assert.equal(normalizeAgent(undefined), "codex");
   assert.equal(normalizeAgent("Claude"), "claude");
+  assert.equal(normalizeAgent("claude-code"), "claude");
   assert.equal(agentLabel("claude"), "Claude Code");
   assert.throws(() => normalizeAgent("unknown"), /可选值为 codex 或 claude/);
   assert.equal(resolveTaskAgent("any", "claude"), "claude");
   assert.equal(resolveTaskAgent("auto", "codex"), "codex");
   assert.equal(resolveTaskAgent("codex", "claude"), "codex");
+  assert.equal(normalizeExecutionMode(undefined), "direct");
+  assert.equal(normalizeExecutionMode("PLAN"), "plan");
+  assert.throws(() => normalizeExecutionMode("execute"), /可选值为 direct 或 plan/);
 });
 
 test("parses Claude stream-json events without executing a CLI", () => {
@@ -64,4 +69,60 @@ test("parses Claude stream-json events without executing a CLI", () => {
   assert.equal(claudeEventText(result), "完成");
   assert.equal(parseClaudeEventLine(""), null);
   assert.throws(() => parseClaudeEventLine("not-json"), SyntaxError);
+});
+
+test("normalizes real Codex and Claude usage without uploading raw fields", () => {
+  const codex = extractAgentUsage("codex", [
+    { type: "item.completed", usage: { input_tokens: 999, output_tokens: 999 } },
+    {
+      type: "turn.completed",
+      usage: {
+        input_tokens: 120,
+        cached_input_tokens: 30,
+        cache_write_input_tokens: 4,
+        output_tokens: 18,
+        reasoning_output_tokens: 7,
+      },
+    },
+  ]);
+  assert.equal(codex.reason, null);
+  assert.deepEqual(codex.usage, {
+    inputTokens: 120,
+    outputTokens: 18,
+    totalTokens: 138,
+    cachedInputTokens: 30,
+    cacheWriteInputTokens: 4,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    reasoningOutputTokens: 7,
+  });
+
+  const claude = extractAgentUsage("claude", [{
+    type: "result",
+    usage: {
+      input_tokens: 80,
+      cache_creation_input_tokens: 12,
+      cache_read_input_tokens: 20,
+      output_tokens: 25,
+    },
+  }]);
+  assert.equal(claude.reason, null);
+  assert.equal(claude.usage.totalTokens, 105);
+  assert.equal(claude.usage.cachedInputTokens, 20);
+  assert.equal(claude.usage.cacheCreationInputTokens, 12);
+  assert.equal(claude.usage.cacheReadInputTokens, 20);
+
+  const unknown = extractAgentUsage("claude", [{ type: "result", usage: { cost_usd: 0.01, transcript: "do not upload" } }]);
+  assert.match(unknown.reason, /没有可识别的 token/);
+  assert.equal(unknown.usage.inputTokens, null);
+  assert.deepEqual(usagePayload({ inputTokens: 4, apiKey: "secret", transcript: "private" }), {
+    inputTokens: 4,
+    outputTokens: null,
+    totalTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    reasoningOutputTokens: null,
+  });
 });

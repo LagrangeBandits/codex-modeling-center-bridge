@@ -1,6 +1,7 @@
 import path from "node:path";
 import { loadSecret } from "./state.mjs";
 import { normalizeAgent, platformId } from "./constants.mjs";
+import { usagePayload } from "./usage.mjs";
 
 export function normalizeSite(value) {
   if (!value) throw new Error("缺少站点地址");
@@ -86,21 +87,36 @@ export async function pairSite({ site, code, siteAuth, name, agent = "codex", wo
   return response;
 }
 
+function telemetryPayload(telemetry) {
+  if (telemetry === null) return { provider: null, model: null, usage: null };
+  const provider = typeof telemetry?.provider === "string" && telemetry.provider.trim()
+    ? telemetry.provider.trim().slice(0, 80)
+    : null;
+  const model = typeof telemetry?.model === "string" && telemetry.model.trim()
+    ? telemetry.model.trim().slice(0, 160)
+    : null;
+  return { provider, model, usage: usagePayload(telemetry?.usage) };
+}
+
 export async function pollTask(config) {
   return siteRequest(config, "/api/runner/poll", { method: "GET" });
 }
 
-export async function sendEvent(config, taskId, stage, progress, message) {
+export async function sendEvent(config, taskId, stage, progress, message, telemetry = undefined) {
+  const payload = { taskId, stage, progress, message };
+  if (telemetry !== undefined) Object.assign(payload, telemetryPayload(telemetry));
   return siteRequest(config, "/api/runner/events", {
     method: "POST",
-    body: JSON.stringify({ taskId, stage, progress, message }),
+    body: JSON.stringify(payload),
   });
 }
 
-export async function completeTask(config, taskId, status, summary = "", error = "") {
+export async function completeTask(config, taskId, status, summary = "", error = "", telemetry = undefined) {
+  const payload = { taskId, status, summary, error };
+  if (telemetry !== undefined) Object.assign(payload, telemetryPayload(telemetry));
   return siteRequest(config, "/api/runner/complete", {
     method: "POST",
-    body: JSON.stringify({ taskId, status, summary, error }),
+    body: JSON.stringify(payload),
   });
 }
 
