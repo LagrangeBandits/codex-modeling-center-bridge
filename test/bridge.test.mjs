@@ -10,6 +10,7 @@ import { extractAgentUsage, usagePayload } from "../src/usage.mjs";
 import { heartbeatPayload } from "../src/heartbeat.mjs";
 import { identityFromEvents, providerFromBaseUrl, providerFromEvent, providerFromModel } from "../src/agent-identity.mjs";
 import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, taskPromptWithMessages, TaskCancelledError } from "../src/task-control.mjs";
+import { resolveTaskPreferences } from "../src/runner.mjs";
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);
@@ -211,4 +212,16 @@ test("normalizes optional task control without uploading raw events", () => {
   const error = new TaskCancelledError("网站取消");
   assert.equal(error.code, "TASK_CANCELLED");
   assert.equal(error.message, "网站取消");
+});
+
+test("passes modelPreference strings and objects to the local Agent", () => {
+  assert.deepEqual(resolveTaskPreferences({ modelPreference: "auto" }), {});
+  assert.deepEqual(resolveTaskPreferences({ modelPreference: "deepseek-chat" }), { model: "deepseek-chat" });
+  assert.deepEqual(resolveTaskPreferences({ modelPreference: "qwen-plus" }), { model: "qwen-plus" });
+  assert.deepEqual(resolveTaskPreferences({ modelPreference: { provider: "dashscope", model: "qwen-plus", reasoningEffort: "high" } }), {
+    provider: "dashscope",
+    model: "qwen-plus",
+    reasoningEffort: "high",
+  });
+  assert.deepEqual(resolveTaskPreferences({ modelPreference: "auto", model: "local-model" }), { model: "local-model" });
 });

@@ -124,15 +124,20 @@ function firstPreferenceValue(task, preference, keys) {
   return null;
 }
 
-function taskPreferences(task) {
-  const preference = [task?.modelPreference, task?.model_preference, task?.modelPreferences]
-    .find((value) => value && typeof value === "object" && !Array.isArray(value)) || {};
+export function resolveTaskPreferences(task) {
+  const rawPreference = task?.modelPreference ?? task?.model_preference ?? task?.modelPreferences;
+  const preference = rawPreference && typeof rawPreference === "object" && !Array.isArray(rawPreference)
+    ? rawPreference
+    : {};
   const resolved = {};
   const model = firstPreferenceValue(task, preference, ["model", "modelName", "model_name"]);
   const provider = firstPreferenceValue(task, preference, ["provider", "modelProvider", "model_provider"]);
   const reasoningEffort = firstPreferenceValue(task, preference, ["reasoningEffort", "reasoning_effort"]);
   const baseUrl = firstPreferenceValue(task, preference, ["baseUrl", "base_url", "apiBaseUrl", "api_base_url"]);
   if (model) resolved.model = model;
+  else if (typeof rawPreference === "string" && rawPreference.trim() && rawPreference.trim().toLowerCase() !== "auto") {
+    resolved.model = rawPreference.trim().slice(0, 160);
+  }
   if (provider) resolved.provider = provider;
   if (reasoningEffort) resolved.reasoningEffort = reasoningEffort;
   if (baseUrl) resolved.baseUrl = baseUrl;
@@ -146,7 +151,7 @@ async function runTaskInternal(config, task, execution) {
   if (task?.agent && selectedAgent !== config.agent) {
     throw new Error(`任务要求使用 ${agentLabel(selectedAgent)}，但本机已配对为 ${agentLabel(config.agent)}。请让网站把任务分配给匹配的设备，或重新配对。`);
   }
-  const taskConfig = { ...config, ...taskPreferences(task), agent: selectedAgent, executionMode };
+  const taskConfig = { ...config, ...resolveTaskPreferences(task), agent: selectedAgent, executionMode };
   const selectedAgentLabel = agentLabel(selectedAgent);
   const priority = normalizeTaskPriority(task?.priority);
   const taskContext = { priority, executionMode };
