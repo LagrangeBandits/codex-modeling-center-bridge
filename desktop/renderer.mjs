@@ -2,6 +2,7 @@ const api = window.modelingCenter;
 const $ = (id) => document.getElementById(id);
 
 let latestStatus = null;
+let latestUpdateState = null;
 let environmentBusy = false;
 let startingRunner = false;
 
@@ -94,6 +95,62 @@ function renderRunner(runner) {
   $("startButton").disabled = runner.running || startingRunner || environmentBusy;
   $("stopButton").disabled = !runner.running;
   if (runner.output?.length) $("runnerLog").textContent = runner.output.join("\n");
+  renderUpdate(latestUpdateState);
+}
+
+function renderUpdate(state) {
+  if (!state) return;
+  latestUpdateState = state;
+  const status = state.status || "idle";
+  const update = state.update;
+  const labels = {
+    disabled: "开发模式",
+    idle: "待检查",
+    checking: "检查中",
+    "not-available": "已是最新",
+    available: "有新版本",
+    downloading: "下载中",
+    downloaded: "待安装",
+    installing: "安装中",
+    error: "检查失败",
+  };
+  const currentVersion = state.currentVersion && state.currentVersion !== "unknown" ? `v${state.currentVersion}` : "未知";
+  $("appVersion").textContent = currentVersion;
+  const stateLabel = $("updateState");
+  stateLabel.className = `state-label update-state ${status}`;
+  stateLabel.textContent = labels[status] || "当前版本";
+
+  let description = "启动后会自动检查公开 Release；下载和安装都需要你的确认。";
+  if (status === "disabled") description = "开发模式不会连接更新服务；正式安装包才会检查公开 Release。";
+  if (status === "checking") description = "正在检查公开 Release，请稍候…";
+  if (status === "not-available") description = "当前已经是最新版本。";
+  if (status === "available") description = `发现新版本 v${update?.version || "未知"}，请确认后下载。`;
+  if (status === "downloading") description = `正在下载 v${update?.version || "未知"}，Runner 可以继续运行。`;
+  if (status === "downloaded") description = latestStatus?.runner?.running
+    ? `v${update?.version || "未知"} 已下载完成；请先停止 Runner，再确认重启并安装。`
+    : `v${update?.version || "未知"} 已下载完成，可以确认重启并安装。`;
+  if (status === "installing") description = "正在准备重启并安装更新…";
+  if (status === "error") description = `更新失败：${state.error || "请稍后重试。"}`;
+  $("updateDescription").textContent = description;
+
+  const busy = ["checking", "downloading", "installing"].includes(status);
+  $("checkUpdateButton").disabled = busy || status === "disabled";
+  $("checkUpdateButton").textContent = status === "checking" ? "检查中…" : "检查更新";
+  $("releaseNotesButton").disabled = !update?.releaseNotesUrl;
+  $("downloadUpdateButton").disabled = status !== "available" || !update?.isNewer;
+  $("installUpdateButton").disabled = status !== "downloaded" || Boolean(latestStatus?.runner?.running);
+
+  const progress = state.progress;
+  const progressPanel = $("updateProgressPanel");
+  progressPanel.hidden = !progress || !["downloading", "downloaded"].includes(status);
+  if (progress) {
+    const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+    $("updateProgress").textContent = `${percent}%`;
+    $("updateProgressBar").style.width = `${percent}%`;
+  } else {
+    $("updateProgress").textContent = "0%";
+    $("updateProgressBar").style.width = "0%";
+  }
 }
 
 function renderStatus(payload) {
@@ -110,6 +167,7 @@ function renderStatus(payload) {
 async function refresh() {
   try {
     renderStatus(await api.getStatus());
+    renderUpdate(await api.updateStatus());
     setMessage("");
   } catch (error) {
     setMessage(error.message || String(error), true);
@@ -132,6 +190,53 @@ async function openSite() {
   try {
     await api.openSite();
     setMessage("已打开云端建模系统。");
+  } catch (error) {
+    setMessage(error.message || String(error), true);
+  }
+}
+
+async function checkForUpdates() {
+  try {
+    setMessage("正在检查软件更新…");
+    const state = await api.checkForUpdates();
+    renderUpdate(state);
+    if (state.status === "error") setMessage(state.error, true);
+    else if (state.status === "available") setMessage(`发现新版本 v${state.update?.version || "未知"}。`);
+    else if (state.status === "not-available") setMessage("当前已经是最新版本。");
+    else if (state.status === "disabled") setMessage("开发模式不会检查真实更新。", true);
+  } catch (error) {
+    setMessage(error.message || String(error), true);
+  }
+}
+
+async function downloadUpdate() {
+  try {
+    setMessage("正在下载软件更新…");
+    const state = await api.downloadUpdate();
+    renderUpdate(state);
+    if (state.status === "error") setMessage(state.error, true);
+  } catch (error) {
+    setMessage(error.message || String(error), true);
+  }
+}
+
+async function installUpdate() {
+  if (latestStatus?.runner?.running) {
+    setMessage("Runner 正在运行。请先停止 Runner，再确认重启并安装。", true);
+    return;
+  }
+  try {
+    const state = await api.installUpdate();
+    renderUpdate(state);
+    if (state.status === "error") setMessage(state.error, true);
+  } catch (error) {
+    setMessage(error.message || String(error), true);
+  }
+}
+
+async function openUpdateNotes() {
+  try {
+    await api.openUpdateNotes();
   } catch (error) {
     setMessage(error.message || String(error), true);
   }
@@ -218,6 +323,10 @@ $("openPairingButton").addEventListener("click", openPairing);
 $("topOpenSiteButton").addEventListener("click", openSite);
 $("heroOpenSiteButton").addEventListener("click", openSite);
 $("openSiteButton").addEventListener("click", openSite);
+$("checkUpdateButton").addEventListener("click", checkForUpdates);
+$("downloadUpdateButton").addEventListener("click", downloadUpdate);
+$("installUpdateButton").addEventListener("click", installUpdate);
+$("releaseNotesButton").addEventListener("click", openUpdateNotes);
 $("closePairingButton").addEventListener("click", closePairing);
 $("cancelPairingButton").addEventListener("click", closePairing);
 $("pairingForm").addEventListener("submit", submitPairing);
@@ -244,6 +353,11 @@ api.onEnvironmentEvent((event) => {
   if (event.type === "progress") $("environmentProgress").textContent = event.message;
   if (event.type === "complete" && event.status) renderStatus(event.status);
   if (event.type === "error") $("environmentProgress").textContent = `准备失败：${event.message}`;
+});
+
+api.onUpdateEvent((state) => {
+  renderUpdate(state);
+  if (state.status === "error") setMessage(state.error, true);
 });
 
 refresh();

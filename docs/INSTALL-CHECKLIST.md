@@ -13,6 +13,8 @@
 7. 回到网站确认设备状态为在线，再提交一个小型测试任务。
 8. 测试成功后，用桌面程序启动 Runner，或用 `start` 保持设备在线；需要只拉一条任务时用 `pull`。
 9. 如网站启用任务优先级、方案确认或取消，确认 Runner 心跳能力中包含 `task:cancel`、`task:priority` 和 `bridge:messages`；旧版网站缺少这些可选接口时仍可正常领取和完成普通任务。
+10. 正式安装包启动后会延迟检查公开 GitHub Release；更新不会自动下载。只有在“软件更新”区域分别确认“下载更新”和“重启并安装”才会改变版本，Runner 运行时安装按钮会保持不可用。
+11. 升级异常时保留旧版本安装包和独立备份；本次发布保留 `v0.1.9` 作为回滚版本，不删除 Keychain、DPAPI、Harness 或本地状态目录。
 
 Claude 的 Windows 注意事项：Claude Code 原生 Windows 不提供与 macOS/Linux 相同的内置沙箱；要在 Windows 上无人值守使用 Claude Agent，应先准备 WSL2。若不准备 WSL2，可选择 Codex 作为 Windows 本机 Agent。程序不会为了绕过沙箱而自动降级到无保护执行。
 

@@ -149,6 +149,20 @@ h2 { margin-bottom: 0; font-size: 22px; letter-spacing: -.035em; }
 .environment-footer { margin-top: 18px; padding-top: 17px; border-top: 1px solid rgba(55, 78, 109, .45); }
 .environment-footer strong { display: block; margin-bottom: 4px; font-size: 13px; }
 .environment-footer p { margin: 0; font-size: 12px; }
+.update-content { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; }
+.update-copy { min-width: 0; }
+.update-version-line { margin: 11px 0 0; color: var(--muted); font-size: 12px; }
+.update-version-line strong { color: var(--muted-strong); }
+.update-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.update-progress { margin-top: 18px; padding-top: 15px; border-top: 1px solid rgba(55, 78, 109, .45); }
+.update-progress-heading { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; }
+.update-progress-heading strong { color: var(--muted-strong); font-size: 12px; }
+.progress-track { height: 7px; margin-top: 9px; overflow: hidden; border-radius: 999px; background: #1a2a40; }
+.progress-bar { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4d87ee, #79a8ff); transition: width .2s ease; }
+.update-state.available, .update-state.downloaded { background: rgba(67, 112, 190, .28); color: #a9c9ff; }
+.update-state.downloading, .update-state.checking { background: rgba(65, 111, 190, .2); color: #a4c5ff; }
+.update-state.error { background: rgba(148, 55, 69, .28); color: #ffadb8; }
+.update-state.disabled { background: #182438; color: #8495ac; }
 label { display: block; margin: 17px 0 8px; color: var(--muted-strong); font-size: 12px; font-weight: 650; }
 input, select { width: 100%; border: 1px solid var(--border-strong); border-radius: 10px; background: #0d1624; color: var(--text); padding: 12px 13px; }
 input::placeholder { color: #66778f; }
@@ -189,17 +203,21 @@ footer { padding: 22px 0 0; color: #74859d; font-size: 11px; text-align: center;
   .cloud-content { align-items: flex-start; flex-direction: column; }
   .cloud-actions { width: 100%; justify-content: flex-start; }
   .cloud-actions .button { flex: 1 1 220px; }
+  .update-content { align-items: flex-start; flex-direction: column; }
+  .update-actions { width: 100%; justify-content: flex-start; }
 }
 @media (max-width: 760px) {
   body { min-width: 0; }
   .app-shell { padding: 0 18px 24px; }
-  .topbar, .topbar-actions, .section-heading, .runner-toolbar, .cloud-content, .environment-footer { align-items: flex-start; flex-direction: column; }
+  .topbar, .topbar-actions, .section-heading, .runner-toolbar, .cloud-content, .environment-footer, .update-content { align-items: flex-start; flex-direction: column; }
   .topbar { padding: 17px 0; }
   .topbar-actions, .cloud-actions, .hero-actions { width: 100%; }
   .topbar-actions .button, .cloud-actions .button, .hero-actions .button { flex: 1; }
   .hero { padding: 42px 0 36px; }
   .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .environment-footer .button { width: 100%; }
+  .update-actions { width: 100%; }
+  .update-actions .button { flex: 1 1 180px; }
   .actions { width: 100%; }
   .actions .button { flex: 1; }
 }

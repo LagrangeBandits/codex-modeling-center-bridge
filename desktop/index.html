@@ -64,6 +64,32 @@
             </div>
           </article>
 
+          <article class="card update-card">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">软件维护</span>
+                <h2>软件更新</h2>
+              </div>
+              <span id="updateState" class="state-label update-state">当前版本</span>
+            </div>
+            <div class="update-content">
+              <div class="update-copy">
+                <p id="updateDescription" class="section-intro">启动后会自动检查公开 Release；下载和安装都需要你的确认。</p>
+                <p class="update-version-line">当前版本 <strong id="appVersion">读取中…</strong></p>
+              </div>
+              <div class="update-actions">
+                <button id="checkUpdateButton" type="button" class="button ghost">检查更新</button>
+                <button id="releaseNotesButton" type="button" class="button ghost" disabled>查看 Release notes</button>
+                <button id="downloadUpdateButton" type="button" class="button secondary" disabled>下载更新</button>
+                <button id="installUpdateButton" type="button" class="button primary" disabled>重启并安装</button>
+              </div>
+            </div>
+            <div id="updateProgressPanel" class="update-progress" hidden>
+              <div class="update-progress-heading"><span>下载进度</span><strong id="updateProgress">0%</strong></div>
+              <div class="progress-track" aria-hidden="true"><div id="updateProgressBar" class="progress-bar"></div></div>
+            </div>
+          </article>
+
         </section>
 
         <section class="workflow-grid">

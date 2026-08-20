@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
 import { normalizeSite, siteAgentValue, siteRequest, uploadArtifact } from "../src/site-client.mjs";
 import { createModelingClient } from "../src/vendor/modeling-platform-contracts/2f61b5e/sdk.mjs";
@@ -12,6 +13,7 @@ import { heartbeatPayload } from "../src/heartbeat.mjs";
 import { identityFromEvents, providerFromBaseUrl, providerFromEvent, providerFromModel } from "../src/agent-identity.mjs";
 import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, taskPromptWithMessages, TaskCancelledError } from "../src/task-control.mjs";
 import { resolveTaskPreferences } from "../src/runner.mjs";
+import { compareVersions, createUpdateController, normalizeDownloadProgress, normalizeUpdateInfo, UPDATE_STATUS } from "../src/update-manager.mjs";
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);
@@ -322,4 +324,86 @@ test("passes modelPreference strings and objects to the local Agent", () => {
     reasoningEffort: "high",
   });
   assert.deepEqual(resolveTaskPreferences({ modelPreference: "auto", model: "local-model" }), { model: "local-model" });
+});
+
+test("compares update versions and normalizes release metadata safely", () => {
+  assert.equal(compareVersions("0.1.10", "0.1.9"), 1);
+  assert.equal(compareVersions("v0.1.10-beta.1", "0.1.10"), -1);
+  assert.equal(compareVersions("not-a-version", "0.1.0"), null);
+  assert.deepEqual(normalizeDownloadProgress({ percent: 140.26, transferred: "20", total: "100" }), {
+    percent: 100,
+    transferred: 20,
+    total: 100,
+    bytesPerSecond: null,
+  });
+  const info = normalizeUpdateInfo({
+    version: "v0.1.10",
+    releaseName: "Release https://private.example/secret",
+    releaseNotes: "修复完成。Bearer hidden-token https://private.example/path",
+    path: "dist\\Modeling-Center-Bridge-0.1.10-arm64.zip",
+  }, "0.1.9");
+  assert.equal(info.version, "0.1.10");
+  assert.equal(info.isNewer, true);
+  assert.equal(info.assetName, "Modeling-Center-Bridge-0.1.10-arm64.zip");
+  assert.equal(info.releaseNotesUrl, "https://github.com/LagrangeBandits/codex-modeling-center-bridge/releases/tag/v0.1.10");
+  assert.equal(info.releaseNotes.includes("private.example"), false);
+  assert.equal(info.releaseName.includes("private.example"), false);
+});
+
+test("does not contact the update service in development mode", async () => {
+  let calls = 0;
+  const updater = {
+    on() { calls += 1; },
+    checkForUpdates() { calls += 1; },
+    downloadUpdate() { calls += 1; },
+    quitAndInstall() { calls += 1; },
+  };
+  const controller = createUpdateController({ updater, isPackaged: false, currentVersion: "0.1.10" });
+  assert.equal(controller.initialize().status, UPDATE_STATUS.DISABLED);
+  assert.equal((await controller.check()).status, UPDATE_STATUS.DISABLED);
+  assert.equal((await controller.download()).status, UPDATE_STATUS.DISABLED);
+  assert.equal(controller.install().status, UPDATE_STATUS.DISABLED);
+  assert.equal(calls, 0);
+});
+
+test("requires explicit download/install confirmation and protects an active Runner", async () => {
+  const updater = new EventEmitter();
+  updater.autoDownload = true;
+  let runnerRunning = false;
+  let installCalls = 0;
+  updater.checkForUpdates = async () => ({
+    updateInfo: { version: "0.1.11", releaseNotes: "安全修复" },
+  });
+  updater.downloadUpdate = async () => {
+    updater.emit("download-progress", { percent: 42, transferred: 42, total: 100, bytesPerSecond: 10 });
+    updater.emit("update-downloaded", { info: { version: "0.1.11", path: "Modeling-Center-Bridge-0.1.11-arm64.zip" } });
+  };
+  updater.quitAndInstall = () => { installCalls += 1; };
+  const controller = createUpdateController({
+    updater,
+    isPackaged: true,
+    currentVersion: "0.1.10",
+    getRunnerStatus: () => ({ running: runnerRunning }),
+  });
+  controller.initialize();
+  assert.equal(updater.autoDownload, false);
+  assert.equal((await controller.check()).status, UPDATE_STATUS.AVAILABLE);
+  assert.equal((await controller.download()).status, UPDATE_STATUS.DOWNLOADED);
+  runnerRunning = true;
+  assert.equal(controller.install().status, UPDATE_STATUS.DOWNLOADED);
+  assert.equal(installCalls, 0);
+  runnerRunning = false;
+  assert.equal(controller.install().status, UPDATE_STATUS.INSTALLING);
+  assert.equal(installCalls, 1);
+});
+
+test("sanitizes updater event errors before exposing them to the renderer", () => {
+  const updater = new EventEmitter();
+  const controller = createUpdateController({ updater, isPackaged: true, currentVersion: "0.1.10" });
+  controller.initialize();
+  updater.emit("error", new Error("Bearer secret-token https://private.example/site?pairingCode=secret"));
+  const state = controller.getState();
+  assert.equal(state.status, UPDATE_STATUS.ERROR);
+  assert.equal(state.error.includes("secret-token"), false);
+  assert.equal(state.error.includes("private.example"), false);
 });

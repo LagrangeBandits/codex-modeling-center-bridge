@@ -1,6 +1,6 @@
 {
   "name": "codex-modeling-center-bridge",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Cross-platform desktop bridge for a private CAD modeling center",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,7 @@
   },
   "main": "desktop/main.mjs",
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/runner.mjs && node --check src/codex-session.mjs && node --check src/claude-session.mjs && node --check src/agent-session.mjs && node --check src/agent-identity.mjs && node --check src/heartbeat.mjs && node --check src/usage.mjs && node --check src/task-control.mjs && node --check src/site-client.mjs && node --check src/desktop-runtime.mjs && node --check desktop/main.mjs && node --check desktop/renderer.mjs",
+    "check": "node --check src/cli.mjs && node --check src/runner.mjs && node --check src/codex-session.mjs && node --check src/claude-session.mjs && node --check src/agent-session.mjs && node --check src/agent-identity.mjs && node --check src/heartbeat.mjs && node --check src/usage.mjs && node --check src/task-control.mjs && node --check src/site-client.mjs && node --check src/desktop-runtime.mjs && node --check src/update-manager.mjs && node --check desktop/main.mjs && node --check desktop/renderer.mjs",
     "test": "node --test",
     "doctor": "node src/cli.mjs doctor",
     "start": "node src/cli.mjs start",
@@ -21,7 +21,8 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.147.0"
+    "@openai/codex-sdk": "0.147.0",
+    "electron-updater": "6.8.9"
   },
   "devDependencies": {
     "electron": "43.4.0",
@@ -30,6 +31,12 @@
   "build": {
     "appId": "com.lagrangebandits.codex-modeling-center-bridge",
     "productName": "Modeling Center Bridge",
+    "publish": {
+      "provider": "github",
+      "owner": "LagrangeBandits",
+      "repo": "codex-modeling-center-bridge",
+      "releaseType": "release"
+    },
     "asar": true,
     "asarUnpack": [
       "src/**",
@@ -53,7 +60,8 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "artifactName": "Modeling-Center-Bridge-${version}-${arch}.${ext}"
     },

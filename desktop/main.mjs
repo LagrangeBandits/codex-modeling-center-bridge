@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
+import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,12 +9,17 @@ import { bootstrapModelingEnvironment, inspectEnvironment } from "../src/modelin
 import { normalizeSite, pairSite } from "../src/site-client.mjs";
 import { loadConfig } from "../src/state.mjs";
 import { prepareNodeRuntime, resolveBridgeNode, runtimeEnvironment } from "../src/desktop-runtime.mjs";
+import { createInitialUpdateState, createUpdateController } from "../src/update-manager.mjs";
+
+const { autoUpdater } = electronUpdater;
 
 const DESKTOP_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 let runnerProcess = null;
 let runnerState = { running: false, pid: null, agent: null, output: [] };
 let environmentPreparation = null;
+let updateController = null;
+let startupUpdateTimer = null;
 
 function bridgeRoot() {
   if (app.isPackaged) return path.join(process.resourcesPath, "app.asar.unpacked");
@@ -57,6 +63,13 @@ function rememberOutput(stream, chunk) {
 
 function runnerStatus() {
   return { ...runnerState, output: [...runnerState.output] };
+}
+
+function updateStatus() {
+  return updateController?.getState() || createInitialUpdateState({
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+  });
 }
 
 async function status() {
@@ -162,6 +175,15 @@ async function openSite() {
   return { site };
 }
 
+async function openUpdateNotes() {
+  const url = updateStatus().update?.releaseNotesUrl;
+  if (!url || !url.startsWith("https://github.com/LagrangeBandits/codex-modeling-center-bridge/releases/tag/")) {
+    throw new Error("当前没有可查看的 Release notes。");
+  }
+  await shell.openExternal(url);
+  return { opened: true };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 980,
@@ -187,9 +209,32 @@ ipcMain.handle("site:open", () => openSite());
 ipcMain.handle("runner:start", (_event, input) => startRunner(input));
 ipcMain.handle("runner:stop", () => stopRunner());
 ipcMain.handle("runner:status", () => runnerStatus());
+ipcMain.handle("update:status", () => updateStatus());
+ipcMain.handle("update:check", () => updateController?.check() || updateStatus());
+ipcMain.handle("update:download", () => updateController?.download() || updateStatus());
+ipcMain.handle("update:install", () => updateController?.install() || updateStatus());
+ipcMain.handle("update:notes", () => openUpdateNotes());
 
 app.whenReady().then(() => {
+  updateController = createUpdateController({
+    updater: autoUpdater,
+    isPackaged: app.isPackaged,
+    currentVersion: app.getVersion(),
+    getRunnerStatus: runnerStatus,
+    onState: (state) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("update:event", state);
+    },
+    log: (message) => console.warn(`更新：${message}`),
+  });
+  updateController.initialize();
   createWindow();
+  if (app.isPackaged) {
+    startupUpdateTimer = setTimeout(() => {
+      startupUpdateTimer = null;
+      void updateController?.check();
+    }, 5_000);
+    startupUpdateTimer.unref?.();
+  }
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -200,5 +245,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  if (startupUpdateTimer) clearTimeout(startupUpdateTimer);
   if (runnerProcess) runnerProcess.kill();
 });
