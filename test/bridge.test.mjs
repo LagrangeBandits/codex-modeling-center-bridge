@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
-import { normalizeSite, siteAgentValue, uploadArtifact } from "../src/site-client.mjs";
+import { normalizeSite, siteAgentValue, siteRequest, uploadArtifact } from "../src/site-client.mjs";
+import { createModelingClient } from "../src/vendor/modeling-platform-contracts/2f61b5e/sdk.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
 import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
@@ -27,6 +28,84 @@ test("requires non-empty values", () => {
 test("normalizes site URLs and rejects unsafe schemes", () => {
   assert.equal(normalizeSite("https://example.test///"), "https://example.test");
   assert.throws(() => normalizeSite("file:///tmp/site"), /必须是 http 或 https/);
+});
+
+test("uses shared transport for legacy auth and preserves the caller AbortSignal", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  const controller = new AbortController();
+  try {
+    await siteRequest({ site: "https://example.test///" }, "/api/runner/events", {
+      method: "POST",
+      runnerToken: "runner-token",
+      siteBypassToken: "site-token",
+      signal: controller.signal,
+      body: JSON.stringify({ taskId: "task-1", usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } }),
+    });
+    assert.equal(calls[0].url, "https://example.test/api/runner/events");
+    assert.equal(calls[0].options.headers.Authorization, "Bearer runner-token");
+    assert.equal(calls[0].options.headers["OAI-Sites-Authorization"], "Bearer site-token");
+    assert.equal(calls[0].options.headers["Content-Type"], "application/json");
+    assert.equal(calls[0].options.signal, controller.signal);
+    assert.equal(calls[0].options.body.includes("runner-token"), false);
+    assert.equal(calls[0].options.body.includes("site-token"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("vendored SDK whitelists telemetry and keeps messages/cancel compatibility", async () => {
+  const calls = [];
+  let cancelAttempt = 0;
+  const client = createModelingClient({
+    site: "https://example.test",
+    runnerToken: "runner-token",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.includes("/messages?") && options.method === "GET") {
+        return new Response(JSON.stringify({ nextCursor: "cursor-2", messages: [{ role: "user", message: "继续" }] }), { status: 200 });
+      }
+      if (url.endsWith("/cancel")) {
+        cancelAttempt += 1;
+        return new Response(JSON.stringify({ error: "not supported" }), { status: cancelAttempt === 1 ? 404 : 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
+  });
+
+  const controls = await client.getMessages("task-1", "cursor-1");
+  assert.equal(controls.cursor, "cursor-2");
+  assert.equal(controls.messages[0].content, "继续");
+  await client.sendMessage("task-1", "已收到", { cursor: controls.cursor });
+  await client.cancelWithFallback("task-1", "用户取消", { usage: { inputTokens: 1 }, apiKey: "do-not-send" });
+  await client.sendEvent("task-1", "modeling", 30, "处理中", {
+    provider: "deepseek",
+    model: "deepseek-chat",
+    usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9, transcript: "do-not-send" },
+  });
+
+  const eventCall = calls.at(-1);
+  const eventPayload = JSON.parse(eventCall.options.body);
+  assert.deepEqual(eventPayload.usage, {
+    inputTokens: 4,
+    outputTokens: 5,
+    totalTokens: 9,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    reasoningOutputTokens: null,
+  });
+  assert.equal("transcript" in eventPayload.usage, false);
+  assert.equal("apiKey" in JSON.parse(calls.find(({ url }) => url.endsWith("/cancel"))?.options.body || "{}"), false);
+  assert.equal(calls.some(({ url }) => url.endsWith("/complete")), true);
 });
 
 test("only uploads CAD/support files from artifacts", () => {

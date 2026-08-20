@@ -12,6 +12,7 @@ import { sleep } from "./process.mjs";
 import { extractUsageFromEvent, usagePayload } from "./usage.mjs";
 import { collectSystemMetrics, heartbeatPayload } from "./heartbeat.mjs";
 import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, TaskCancelledError, taskMessagesFromTask, taskPromptWithMessages } from "./task-control.mjs";
+import { normalizeTask as normalizeModelingTask } from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
 
 const CONTROL_POLL_INTERVAL_MS = 1_500;
 
@@ -145,10 +146,11 @@ export function resolveTaskPreferences(task) {
 }
 
 async function runTaskInternal(config, task, execution) {
+  task = normalizeModelingTask(task);
   if (!isSafeTaskId(task?.id)) throw new Error("网站返回了不安全的任务 ID，已拒绝写入本地工作区。");
   const selectedAgent = resolveTaskAgent(task?.agent, config.agent);
   const executionMode = normalizeExecutionMode(task?.executionMode ?? task?.execution_mode);
-  if (task?.agent && selectedAgent !== config.agent) {
+  if (task?.agent && task.agent !== "any" && selectedAgent !== config.agent) {
     throw new Error(`任务要求使用 ${agentLabel(selectedAgent)}，但本机已配对为 ${agentLabel(config.agent)}。请让网站把任务分配给匹配的设备，或重新配对。`);
   }
   const taskConfig = { ...config, ...resolveTaskPreferences(task), agent: selectedAgent, executionMode };
@@ -346,6 +348,7 @@ export async function startRunner(options = {}) {
     unsupported: false,
     previousCpuSnapshot: null,
   };
+  let lastPollWarningAt = 0;
   const absorbTelemetry = (telemetry) => {
     if (!telemetry) return;
     if (typeof telemetry.provider === "string" && telemetry.provider.trim() && telemetry.provider !== "unknown") {
@@ -405,8 +408,18 @@ export async function startRunner(options = {}) {
   while (true) {
     triggerHeartbeat();
     while (active.size < concurrency) {
-      const payload = await pollTask(config);
-      if (!payload.task) break;
+      let payload;
+      try {
+        payload = await pollTask(config);
+      } catch (error) {
+        const now = Date.now();
+        if (now - lastPollWarningAt >= 15_000) {
+          lastPollWarningAt = now;
+          console.warn(`任务轮询失败（将自动重试，不影响已运行任务）：${redactForLog(error?.message || error)}\n`);
+        }
+        break;
+      }
+      if (!payload?.task) break;
       const taskPromise = runOne(config, payload.task, absorbTelemetry).finally(() => {
         active.delete(taskPromise);
         triggerHeartbeat(true);
