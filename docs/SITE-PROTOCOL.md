@@ -49,7 +49,7 @@ The bridge may add `provider`, `model`, and `usage` to `/api/runner/events` and 
 
 The usage payload contains aggregate numeric values and `null` only. It never contains API keys, login state, raw transcripts, complete provider events, or arbitrary provider fields. Unknown `usage` fields must be ignored by the site.
 
-The poll response may include `task.maxArtifactBytes`, `task.priority`, and `task.modelPreference`. Priority is server-owned: the Runner reports it for observability and does not create a second local queue. A model preference is passed only to the selected local Agent adapter; it never contains a secret. If a historical task has already finished but its local `events.jsonl` was retained, `codex-modeling-bridge reconcile <task-id>` replays only the normalized provider/model/usage payload to `/api/runner/usage`; the endpoint is ownership-checked and settlement remains idempotent.
+The poll response may include `task.maxArtifactBytes`, `task.priority`, and `task.modelPreference`. `maxArtifactBytes: 0` means no application-level per-file limit; the site or transport may still impose its own upload/request limit. Priority is server-owned: the Runner reports it for observability and does not create a second local queue. A model preference is passed only to the selected local Agent adapter; it never contains a secret. If a historical task has already finished but its local `events.jsonl` was retained, `codex-modeling-bridge reconcile <task-id>` replays only the normalized provider/model/usage payload to `/api/runner/usage`; the endpoint is ownership-checked and settlement remains idempotent.
 
 ## Optional Runner heartbeat
 

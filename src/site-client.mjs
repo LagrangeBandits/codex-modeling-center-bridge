@@ -26,7 +26,7 @@ async function jsonFromResponse(response, endpoint = "") {
   }
   if (!response.ok) {
     const fallback = response.status === 413 && endpoint.includes("/artifacts")
-      ? "交付文件上传失败：文件超过网站当前单文件上限。请减小或拆分 CAD 文件后重试。"
+      ? "交付文件上传失败：应用层没有固定单文件上限，但当前站点或网络平台拒绝了这次上传。请减小或拆分 CAD 文件后重试。"
       : `站点请求失败（${response.status}）`;
     const error = new Error(payload.error || fallback);
     error.status = response.status;
@@ -201,10 +201,10 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-export async function uploadArtifact(config, taskId, filename, content, maxBytes = 25 * 1024 * 1024) {
+export async function uploadArtifact(config, taskId, filename, content, maxBytes = 0) {
   const size = content?.byteLength ?? content?.length ?? 0;
   if (size <= 0) throw new Error(`交付文件“${path.basename(filename)}”为空，未上传。`);
-  if (Number.isFinite(maxBytes) && size > maxBytes) {
+  if (Number.isFinite(maxBytes) && maxBytes > 0 && size > maxBytes) {
     const error = new Error(`交付文件“${path.basename(filename)}”大小为 ${formatBytes(size)}，超过当前单文件上限 ${formatBytes(maxBytes)}。请减小或拆分 CAD 文件后重试。`);
     error.status = 413;
     error.code = "ARTIFACT_TOO_LARGE";

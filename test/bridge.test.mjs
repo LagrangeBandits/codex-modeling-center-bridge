@@ -44,6 +44,25 @@ test("rejects an oversized artifact before opening an upload request", async () 
   );
 });
 
+test("treats an artifact limit of zero as unlimited", async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async (_url, options) => {
+    called = true;
+    assert.equal(options?.method, "POST");
+    return new Response(JSON.stringify({ artifact: { id: "artifact-1" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    await uploadArtifact({ site: "https://example.test" }, "task-1", "model.step", Buffer.alloc(6), 0);
+    assert.equal(called, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("requires the supported local runtimes", () => {
   assert.equal(isSupportedNodeVersion("v24.19.0"), true);
   assert.equal(isSupportedNodeVersion("v22.19.0"), false);
