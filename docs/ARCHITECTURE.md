@@ -27,9 +27,11 @@ The program connects a private modeling website to a user's own Mac or Windows d
 2. The desktop app sends the code and selected Agent to `/api/runner/register`.
 3. The app stores the site bridge authorization and Runner token in macOS Keychain or Windows DPAPI.
 4. The Runner polls the site. The server claims a queued task with a conditional update, so two devices cannot claim the same task.
-5. The Runner creates an isolated task directory and dispatches the task to the configured Agent adapter.
-6. The Agent writes the CAD generator, runs local modeling/validation commands, and places deliverables in `artifacts/`.
-7. The Runner uploads only allowed CAD/support files and marks the task complete after a real CAD file exists.
+5. The Runner creates an isolated task directory, applies the server priority/model preference, and dispatches the task to the configured Agent adapter.
+6. While the Agent is running, an optional control channel receives website supplements and checks `cancel_requested_at` at bounded safe points. A cancellation aborts the active local turn and stops before artifact upload.
+7. In plan mode the Agent is read-only and only a modeling proposal is returned; the site can send a follow-up message or confirm the plan and requeue direct execution.
+8. In direct mode the Agent writes the CAD generator, runs local modeling/validation commands, and places deliverables in `artifacts/`.
+9. The Runner uploads only allowed CAD/support files and marks the task complete after a real CAD file exists.
 
 ## Agent boundary
 
@@ -53,4 +55,7 @@ The Electron renderer has no Node integration. Context isolation and a narrow pr
 - A failed task is reported as failed and leaves its local task directory for inspection.
 - A failed dependency update does not delete an existing virtual environment.
 - A runner can be restarted; queued tasks remain queued on the site.
+- Server priority remains authoritative; the Runner never reorders or duplicates the site queue.
+- A cancellation is checked before Agent startup, during streamed events, before uploads, and before settlement. If the optional control endpoint is missing, normal legacy execution continues.
+- Web supplements are task-local context only; they never open or synchronize a user's personal Codex/Claude conversation.
 - Raw credentials are excluded from task prompts, transcripts, artifacts, and Git.

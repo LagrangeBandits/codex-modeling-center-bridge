@@ -12,6 +12,7 @@
 6. 确认 `doctor` 或桌面状态显示 Node 24+、Python 3.11+、CadQuery 和所选 Agent 已就绪。
 7. 回到网站确认设备状态为在线，再提交一个小型测试任务。
 8. 测试成功后，用桌面程序启动 Runner，或用 `start` 保持设备在线；需要只拉一条任务时用 `pull`。
+9. 如网站启用任务优先级、方案确认或取消，确认 Runner 心跳能力中包含 `task:cancel`、`task:priority` 和 `bridge:messages`；旧版网站缺少这些可选接口时仍可正常领取和完成普通任务。
 
 Claude 的 Windows 注意事项：Claude Code 原生 Windows 不提供与 macOS/Linux 相同的内置沙箱；要在 Windows 上无人值守使用 Claude Agent，应先准备 WSL2。若不准备 WSL2，可选择 Codex 作为 Windows 本机 Agent。程序不会为了绕过沙箱而自动降级到无保护执行。
 
@@ -22,3 +23,5 @@ Claude 的 Windows 注意事项：Claude Code 原生 Windows 不提供与 macOS/
 - 不要同时以管理员身份运行整个 Runner；只有系统依赖安装步骤在需要时接受系统确认。
 - 不要让多个设备共享同一个本地工作区；每台设备使用自己的默认工作区。
 - 不要把一台设备的本地 Agent 会话、`events.jsonl` 或任务目录复制到另一台设备；跨设备只同步网站任务和允许上传的交付文件。
+
+任务交接时同时记录：任务 ID、网站优先级、`direct`/`plan` 模式、选定 Agent、模型偏好、当前本地会话是否存在、最近一次 Runner 状态和待确认的几何假设。取消任务后保留任务目录用于诊断，不要删除 Keychain、DPAPI、Harness 或独立回滚备份。

@@ -60,6 +60,12 @@ function environmentForClaude(config = {}) {
   // API credentials could silently change the billing/authentication path.
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
+  if (typeof config.baseUrl === "string" && /^https?:\/\//i.test(config.baseUrl.trim())) {
+    environment.ANTHROPIC_BASE_URL = config.baseUrl.trim();
+  }
+  if (typeof config.provider === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(config.provider.trim())) {
+    environment.CLAUDE_CODE_PROVIDER = config.provider.trim();
+  }
   return environment;
 }
 
@@ -146,6 +152,7 @@ function claudeArgs({ taskDirectory, config, previousSession, settingsPath }) {
     "--permission-mode", claudePermissionMode(config),
   ];
   if (previousSession?.sessionId) args.push("--resume", previousSession.sessionId);
+  if (config.model) args.push("--model", String(config.model).trim().slice(0, 160));
   return args;
 }
 
@@ -192,7 +199,7 @@ function appendLineParser(buffer, chunk, onLine) {
   return remainder;
 }
 
-function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
+function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent, signal }) {
   return new Promise((resolve, reject) => {
     const child = spawn(claudeExecutable(), args, {
       cwd: taskDirectory,
@@ -205,6 +212,13 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
     let stderr = "";
     let callbackChain = Promise.resolve();
     let settled = false;
+    let cancellationError = null;
+    const abort = () => {
+      cancellationError = signal?.reason instanceof Error ? signal.reason : new Error("Claude Code 回合已取消。");
+      child.kill();
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
 
     const appendEvent = (line) => {
       if (!String(line).trim()) return;
@@ -217,7 +231,12 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
       }
       if (!event || typeof event !== "object") return;
       events.push(event);
-      if (onEvent) callbackChain = callbackChain.then(() => onEvent(event));
+      if (onEvent) {
+        callbackChain = callbackChain.then(() => onEvent(event)).catch((error) => {
+          if (!settled) child.kill();
+          throw error;
+        });
+      }
     };
 
     child.stdout.on("data", (chunk) => {
@@ -229,10 +248,19 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
-      reject(new Error(`无法启动 Claude Code：${redactForLog(error.message)}`));
+      reject(cancellationError || new Error(`无法启动 Claude Code：${redactForLog(error.message)}`));
     });
-    child.on("close", async (code, signal) => {
+    child.on("close", async (code, childSignal) => {
       if (stdoutRemainder.trim()) appendEvent(stdoutRemainder);
+      signal?.removeEventListener?.("abort", abort);
+      if (cancellationError) {
+        await callbackChain.catch(() => {});
+        if (!settled) {
+          settled = true;
+          reject(cancellationError);
+        }
+        return;
+      }
       try {
         await callbackChain;
       } catch (error) {
@@ -244,7 +272,7 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
       }
       if (settled) return;
       settled = true;
-      resolve({ code: code ?? 1, signal, stderr, events });
+      resolve({ code: code ?? 1, signal: childSignal, stderr, events });
     });
 
     // Ending stdin immediately is required for print mode; waiting for the
@@ -253,7 +281,7 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
   });
 }
 
-export async function runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent }) {
+export async function runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent, signal }) {
   await fs.mkdir(path.join(taskDirectory, "artifacts"), { recursive: true });
   const settingsPath = await writeClaudeSettings(taskDirectory, config);
   const result = await runClaudeProcess({
@@ -262,6 +290,7 @@ export async function runClaudeTurn({ taskDirectory, prompt, config, previousSes
     args: claudeArgs({ taskDirectory, config, previousSession, settingsPath }),
     config,
     onEvent,
+    signal,
   });
 
   const sessionId = [...result.events].reverse().map(sessionIdFromEvent).find(Boolean) || previousSession?.sessionId || null;

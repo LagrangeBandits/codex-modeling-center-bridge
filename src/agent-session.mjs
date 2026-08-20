@@ -4,12 +4,12 @@ import { runCodexTurn } from "./codex-session.mjs";
 import { identityFromEvents, loadLocalAgentIdentity } from "./agent-identity.mjs";
 import { usagePayload } from "./usage.mjs";
 
-export async function runAgentTurn({ agent, taskDirectory, prompt, config, previousSession, onEvent, initialIdentity }) {
+export async function runAgentTurn({ agent, taskDirectory, prompt, config, previousSession, onEvent, initialIdentity, signal }) {
   const selectedAgent = normalizeAgent(agent || config?.agent);
   const localIdentity = initialIdentity || await loadLocalAgentIdentity(selectedAgent, config);
   let result;
   if (selectedAgent === "claude") {
-    result = await runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent });
+    result = await runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent, signal });
   } else {
     result = await runCodexTurn({
       taskDirectory,
@@ -17,6 +17,7 @@ export async function runAgentTurn({ agent, taskDirectory, prompt, config, previ
       config,
       previousThreadId: previousSession?.threadId,
       onEvent,
+      signal,
     });
   }
   const identity = identityFromEvents(selectedAgent, result.events, localIdentity);

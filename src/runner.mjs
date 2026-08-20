@@ -7,17 +7,136 @@ import { runAgentTurn, sessionReference } from "./agent-session.mjs";
 import { identityFromEvent, identityFromEvents, loadLocalAgentIdentity } from "./agent-identity.mjs";
 import { loadSession, prepareTaskDirectory, redactForLog } from "./codex-session.mjs";
 import { loadConfig } from "./state.mjs";
-import { completeTask, pollTask, reportTaskUsage, sendEvent, sendHeartbeat, uploadArtifact } from "./site-client.mjs";
+import { cancelTask, completeTask, pollTask, pollTaskControl, reportTaskUsage, sendEvent, sendHeartbeat, sendTaskMessage, uploadArtifact } from "./site-client.mjs";
 import { sleep } from "./process.mjs";
 import { extractUsageFromEvent, usagePayload } from "./usage.mjs";
 import { collectSystemMetrics, heartbeatPayload } from "./heartbeat.mjs";
+import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, TaskCancelledError, taskMessagesFromTask, taskPromptWithMessages } from "./task-control.mjs";
 
-async function report(config, taskId, stage, progress, message, telemetry = undefined) {
+const CONTROL_POLL_INTERVAL_MS = 1_500;
+
+async function report(config, taskId, stage, progress, message, telemetry = undefined, context = undefined) {
   try {
-    await sendEvent(config, taskId, stage, progress, message, telemetry);
+    await sendEvent(config, taskId, stage, progress, message, telemetry, context);
   } catch (error) {
     console.error(`进度回传失败：${redactForLog(error.message)}`);
   }
+}
+
+class TaskControlChannel {
+  constructor(config, taskId) {
+    this.config = config;
+    this.taskId = taskId;
+    this.cursor = null;
+    this.messages = [];
+    this.unsupported = false;
+    this.inFlight = null;
+    this.lastPollAt = 0;
+    this.lastWarningAt = 0;
+    this.timer = null;
+    this.cancellationError = null;
+    this.abortController = new AbortController();
+  }
+
+  get signal() {
+    return this.abortController.signal;
+  }
+
+  start() {
+    if (this.timer || this.unsupported) return;
+    this.timer = setInterval(() => {
+      void this.poll(true);
+    }, CONTROL_POLL_INTERVAL_MS);
+    this.timer.unref?.();
+  }
+
+  requestCancellation(reason) {
+    if (this.cancellationError) return;
+    this.cancellationError = new TaskCancelledError(reason);
+    this.abortController.abort(this.cancellationError);
+  }
+
+  async poll(force = false) {
+    if (this.unsupported || this.cancellationError) return null;
+    const now = Date.now();
+    if (!force && now - this.lastPollAt < CONTROL_POLL_INTERVAL_MS) return null;
+    if (this.inFlight) return this.inFlight;
+    this.lastPollAt = now;
+    this.inFlight = pollTaskControl(this.config, this.taskId, this.cursor)
+      .then((payload) => {
+        const control = normalizeControlPayload(payload);
+        if (control.cursor) this.cursor = control.cursor;
+        if (control.messages.length) {
+          this.messages = normalizeTaskMessages([...this.messages, ...control.messages]);
+        }
+        if (control.cancelRequested) this.requestCancellation(control.cancelReason);
+        return control;
+      })
+      .catch((error) => {
+        if (error?.status === 404 || error?.status === 405) {
+          this.unsupported = true;
+          return null;
+        }
+        if (now - this.lastWarningAt >= 15_000) {
+          this.lastWarningAt = now;
+          console.warn(`任务控制消息回传失败（不影响当前任务）：${redactForLog(error?.message || error)}\n`);
+        }
+        return null;
+      })
+      .finally(() => {
+        this.inFlight = null;
+      });
+    return this.inFlight;
+  }
+
+  async check(force = false) {
+    await this.poll(force);
+    if (this.cancellationError) throw this.cancellationError;
+  }
+
+  async publishAssistantMessage(message) {
+    if (this.unsupported) return false;
+    try {
+      await sendTaskMessage(this.config, this.taskId, message, { cursor: this.cursor });
+      return true;
+    } catch (error) {
+      if (error?.status === 404 || error?.status === 405) {
+        this.unsupported = true;
+        return false;
+      }
+      console.warn(`网页消息回传失败（不影响任务完成）：${redactForLog(error?.message || error)}\n`);
+      return false;
+    }
+  }
+
+  async stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    if (this.inFlight) await this.inFlight;
+  }
+}
+
+function firstPreferenceValue(task, preference, keys) {
+  for (const key of keys) {
+    const value = task?.[key] ?? preference?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 160);
+  }
+  return null;
+}
+
+function taskPreferences(task) {
+  const preference = [task?.modelPreference, task?.model_preference, task?.modelPreferences]
+    .find((value) => value && typeof value === "object" && !Array.isArray(value)) || {};
+  const resolved = {};
+  const model = firstPreferenceValue(task, preference, ["model", "modelName", "model_name"]);
+  const provider = firstPreferenceValue(task, preference, ["provider", "modelProvider", "model_provider"]);
+  const reasoningEffort = firstPreferenceValue(task, preference, ["reasoningEffort", "reasoning_effort"]);
+  const baseUrl = firstPreferenceValue(task, preference, ["baseUrl", "base_url", "apiBaseUrl", "api_base_url"]);
+  if (model) resolved.model = model;
+  if (provider) resolved.provider = provider;
+  if (reasoningEffort) resolved.reasoningEffort = reasoningEffort;
+  if (baseUrl) resolved.baseUrl = baseUrl;
+  return resolved;
 }
 
 async function runTaskInternal(config, task, execution) {
@@ -27,8 +146,17 @@ async function runTaskInternal(config, task, execution) {
   if (task?.agent && selectedAgent !== config.agent) {
     throw new Error(`任务要求使用 ${agentLabel(selectedAgent)}，但本机已配对为 ${agentLabel(config.agent)}。请让网站把任务分配给匹配的设备，或重新配对。`);
   }
-  const taskConfig = { ...config, agent: selectedAgent, executionMode };
+  const taskConfig = { ...config, ...taskPreferences(task), agent: selectedAgent, executionMode };
   const selectedAgentLabel = agentLabel(selectedAgent);
+  const priority = normalizeTaskPriority(task?.priority);
+  const taskContext = { priority, executionMode };
+  const control = new TaskControlChannel(config, task.id);
+  execution.control = control;
+  control.start();
+  const initialCancellation = cancellationState(task);
+  if (initialCancellation.requested) control.requestCancellation(initialCancellation.reason);
+  await control.check(true);
+  const taskPrompt = taskPromptWithMessages(task.prompt, [...taskMessagesFromTask(task), ...control.messages]);
   const initialIdentity = await loadLocalAgentIdentity(selectedAgent, taskConfig);
   const telemetry = {
     provider: initialIdentity.provider,
@@ -38,7 +166,7 @@ async function runTaskInternal(config, task, execution) {
   execution.telemetry = telemetry;
   execution.onTelemetry?.(telemetry);
   const taskDirectory = defaultTaskDirectory(config.workspace, task.id);
-  await prepareTaskDirectory(taskDirectory, task);
+  await prepareTaskDirectory(taskDirectory, { ...task, prompt: taskPrompt });
   const previousSession = await loadSession(taskDirectory);
   if (previousSession?.agent && previousSession.agent !== selectedAgent) {
     throw new Error(`该任务已有 ${agentLabel(previousSession.agent)} 本地会话，不能改用 ${selectedAgentLabel} 继续；请使用原 Agent 或建立新任务。`);
@@ -47,9 +175,9 @@ async function runTaskInternal(config, task, execution) {
 
   await report(config, task.id, "planning", 16, executionMode === "plan"
     ? `${selectedAgentLabel} 正在整理建模方案，不会运行 CAD 或上传模型文件。`
-    : `${selectedAgentLabel} 正在解析尺寸、方向和交付约束。`, telemetry);
+    : `${selectedAgentLabel} 正在解析尺寸、方向和交付约束。`, telemetry, taskContext);
   if (executionMode === "direct") {
-    await report(config, task.id, "modeling", 30, `${selectedAgentLabel} 正在本地生成参数化 CAD。`, telemetry);
+    await report(config, task.id, "modeling", 30, `${selectedAgentLabel} 正在本地生成参数化 CAD。`, telemetry, taskContext);
   }
 
   const result = await runAgentTurn({
@@ -59,17 +187,19 @@ async function runTaskInternal(config, task, execution) {
       "你正在执行私有 CAD 建模任务。",
       executionMode === "plan"
         ? "当前是方案规划模式：只输出可执行的建模方案、参数假设、坐标系、建模步骤、验证计划和交付格式。不要运行任何命令、Python、CadQuery 或 CAD 工具，不要创建或修改 CAD 文件，不要上传文件。"
-        : "不要等待用户追问；对低风险缺失参数做明确工程假设并写入验证报告。",
+      : "不要等待用户追问；对低风险缺失参数做明确工程假设并写入验证报告。",
       executionMode === "plan"
         ? "可以直接以最终文本回答；不要把方案伪装成已生成的模型。"
         : "严格在当前任务目录工作，最终文件放进 artifacts/。",
       "\n用户需求：",
-      task.prompt,
+      taskPrompt,
     ].join("\n"),
     config: taskConfig,
     previousSession,
     initialIdentity,
+    signal: control.signal,
     onEvent: async (event) => {
+      await control.check();
       const eventIdentity = identityFromEvent(event, { ...telemetry, agent: selectedAgent });
       if (eventIdentity.provider && eventIdentity.provider !== "unknown") telemetry.provider = eventIdentity.provider;
       if (eventIdentity.model) telemetry.model = eventIdentity.model;
@@ -78,7 +208,7 @@ async function runTaskInternal(config, task, execution) {
       if (eventUsage) {
         telemetry.usage = usagePayload(eventUsage.usage);
         execution.onTelemetry?.(telemetry);
-        await report(config, task.id, "validating", 72, `${selectedAgentLabel} 回合完成，正在整理用量和任务结果。`, telemetry);
+        await report(config, task.id, "validating", 72, `${selectedAgentLabel} 回合完成，正在整理用量和任务结果。`, telemetry, taskContext);
         return;
       }
       const now = Date.now();
@@ -87,19 +217,21 @@ async function runTaskInternal(config, task, execution) {
       if (event.type === "item.started" || event.type === "item.updated") {
         const item = event.item;
         if (item?.type === "command_execution") {
-          await report(config, task.id, "modeling", 46, `${selectedAgentLabel} 正在本地执行建模命令：${String(item.command).slice(0, 220)}`, telemetry);
+          await report(config, task.id, "modeling", 46, `${selectedAgentLabel} 正在本地执行建模命令：${redactForLog(String(item.command)).slice(0, 220)}`, telemetry, taskContext);
         } else if (item?.type === "file_change") {
-          await report(config, task.id, "modeling", 58, `${selectedAgentLabel} 正在写入参数化脚本和验证文件。`, telemetry);
+          await report(config, task.id, "modeling", 58, `${selectedAgentLabel} 正在写入参数化脚本和验证文件。`, telemetry, taskContext);
         }
       }
       if (event.type === "assistant") {
         const tools = Array.isArray(event.message?.content)
           ? event.message.content.filter((part) => part?.type === "tool_use").map((part) => part.name).filter(Boolean)
           : [];
-        if (tools.length) await report(config, task.id, "modeling", 58, `${selectedAgentLabel} 正在使用本地工具：${tools.join(", ")}`, telemetry);
+        if (tools.length) await report(config, task.id, "modeling", 58, `${selectedAgentLabel} 正在使用本地工具：${tools.join(", ")}`, telemetry, taskContext);
       }
     },
   });
+
+  await control.check(true);
 
   if (result.provider && result.provider !== "unknown") telemetry.provider = result.provider;
   telemetry.model = result.model || telemetry.model;
@@ -109,21 +241,26 @@ async function runTaskInternal(config, task, execution) {
   const summary = String(result.finalResponse || (executionMode === "plan"
     ? `${selectedAgentLabel} 已完成建模方案。`
     : `${selectedAgentLabel} 已完成建模、验证并生成交付文件。`)).slice(0, 6_000);
+  const safeSummary = redactForLog(summary);
   if (executionMode === "plan") {
-    await report(config, task.id, "planning", 92, `${selectedAgentLabel} 已生成建模方案，等待网站确认后再执行。`, telemetry);
-    await completeTask(config, task.id, "planned", summary, "", telemetry);
+    await report(config, task.id, "planning", 92, `${selectedAgentLabel} 已生成建模方案，等待网站确认后再执行。`, telemetry, taskContext);
+    await control.publishAssistantMessage(safeSummary);
+    await completeTask(config, task.id, "planned", safeSummary, "", telemetry, taskContext);
     console.log(`任务已规划：${task.id} · ${selectedAgentLabel} 本地会话 ${sessionReference(result) || "未返回"}`);
     return;
   }
 
+  await control.check(true);
   const artifacts = await collectArtifacts(taskDirectory);
   if (!hasCadArtifact(artifacts)) throw new Error("没有发现 STEP、STL 或其他 CAD 输出文件。");
 
-  await report(config, task.id, "delivering", 88, `发现 ${artifacts.length} 个交付文件，正在上传到私有对象存储。`, telemetry);
+  await report(config, task.id, "delivering", 88, `发现 ${artifacts.length} 个交付文件，正在上传到私有对象存储。`, telemetry, taskContext);
   for (const file of artifacts) {
+    await control.check(true);
     await uploadArtifact(config, task.id, path.basename(file), await fs.readFile(file), task.maxArtifactBytes);
   }
-  await completeTask(config, task.id, "completed", summary, "", telemetry);
+  await control.check(true);
+  await completeTask(config, task.id, "completed", safeSummary, "", telemetry, taskContext);
   console.log(`任务完成：${task.id} · ${selectedAgentLabel} 本地会话 ${sessionReference(result) || "未返回"}`);
 }
 
@@ -132,6 +269,7 @@ async function runTask(config, task, onTelemetry = undefined) {
   try {
     await runTaskInternal(config, task, execution);
   } catch (error) {
+    if (execution.control?.cancellationError && error?.code !== "TASK_CANCELLED") error = execution.control.cancellationError;
     if (error && typeof error === "object") {
       if (execution.telemetry && error.usage !== undefined) {
         execution.telemetry.usage = usagePayload(error.usage);
@@ -139,6 +277,8 @@ async function runTask(config, task, onTelemetry = undefined) {
       error.telemetry = execution.telemetry;
     }
     throw error;
+  } finally {
+    await execution.control?.stop();
   }
 }
 
@@ -148,8 +288,22 @@ async function runOne(config, task, onTelemetry = undefined) {
   } catch (error) {
     const message = redactForLog(error instanceof Error ? error.message : String(error));
     console.error(`任务失败 ${task.id}：${message}`);
+    if (error?.code === "TASK_CANCELLED") {
+      try {
+        await cancelTask(config, task.id, message, error?.telemetry ?? null, {
+          priority: normalizeTaskPriority(task?.priority),
+          executionMode: task?.executionMode ?? task?.execution_mode,
+        });
+      } catch (reportError) {
+        console.error(`取消状态回传失败：${redactForLog(reportError.message)}`);
+      }
+      return;
+    }
     try {
-      await completeTask(config, task.id, "failed", "", message, error?.telemetry ?? null);
+      await completeTask(config, task.id, "failed", "", message, error?.telemetry ?? null, {
+        priority: normalizeTaskPriority(task?.priority),
+        executionMode: task?.executionMode ?? task?.execution_mode,
+      });
     } catch (reportError) {
       console.error(`失败状态回传失败：${redactForLog(reportError.message)}`);
     }

@@ -52,6 +52,9 @@ export function defaultCapabilities(agent) {
   return [
     "task:direct",
     "task:plan",
+    "task:cancel",
+    "task:priority",
+    "bridge:messages",
     selectedAgent === "claude" ? "agent:claude-code" : "agent:codex",
   ];
 }

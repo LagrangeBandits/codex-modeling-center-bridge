@@ -118,6 +118,8 @@ node src/cli.mjs start --agent codex --concurrency 1
 
 `pull` 只领取一条任务；长期运行用 `start`。每台机器默认一个并发槽位，只有在本机资源足够时才增加并发。
 
+网站可以为任务设置优先级、模型偏好和 `plan`/`direct` 模式，也可以在方案阶段发送当前任务的补充消息或取消请求。Runner 会在安全检查点响应取消；这些控制接口是可选的，不支持时旧网站仍按原轮询协议工作。
+
 如果本机使用 OpenAI-compatible、DeepSeek、Qwen/DashScope 或其他兼容后端，可在启动 Runner 时显式提供身份，例如 `node src/cli.mjs start --agent codex --provider deepseek --model deepseek-chat`。不提供且本地响应/配置也无法可靠识别时，网站会收到 `provider: "unknown"`，不会把 Agent 类型冒充成供应商。
 
 ## 本机文件与安全
@@ -129,4 +131,4 @@ node src/cli.mjs start --agent codex --concurrency 1
 
 站点桥接授权和 Runner token 保存在操作系统安全存储；任务工作区保存 `REQUEST.md`、`AGENTS.md`、`session.json`、脱敏的 `artifacts/conversation.md` 和原始本地 `events.jsonl`。原始事件只留在本机，网站只接收允许的交付文件和摘要。
 
-不要以管理员身份运行整个 Runner，不要复制任何设备的 Agent 登录目录，不要让不同设备共享工作区。完整安装与回滚注意事项见 [`docs/INSTALL-CHECKLIST.md`](docs/INSTALL-CHECKLIST.md)，架构与站点字段见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 和 [`docs/SITE-PROTOCOL.md`](docs/SITE-PROTOCOL.md)。
+不要以管理员身份运行整个 Runner，不要复制任何设备的 Agent 登录目录，不要让不同设备共享工作区。完整安装与回滚注意事项见 [`docs/INSTALL-CHECKLIST.md`](docs/INSTALL-CHECKLIST.md)，任务交接见 [`docs/CAD-HANDOFF.md`](docs/CAD-HANDOFF.md)，架构与站点字段见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 和 [`docs/SITE-PROTOCOL.md`](docs/SITE-PROTOCOL.md)。

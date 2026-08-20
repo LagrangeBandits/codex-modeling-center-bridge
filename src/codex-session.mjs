@@ -97,6 +97,30 @@ function sdkThreadOptions(taskDirectory, config) {
   return options;
 }
 
+function safeHttpUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeProviderKey(value) {
+  const provider = String(value || "").trim();
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(provider) && provider.toLowerCase() !== "unknown" ? provider : null;
+}
+
+function sdkOptions(config) {
+  const options = { env: sdkEnvironment(config) };
+  const baseUrl = safeHttpUrl(config.baseUrl);
+  if (baseUrl) options.baseUrl = baseUrl;
+  const provider = safeProviderKey(config.modelProvider || config.model_provider || config.provider);
+  if (provider) options.config = { model_provider: provider };
+  return options;
+}
+
 function sdkEnvironment(config) {
   const environment = runtimeEnvironment();
   const pythonPath = environmentPythonPath(config);
@@ -105,14 +129,14 @@ function sdkEnvironment(config) {
   return environment;
 }
 
-export async function runCodexTurn({ taskDirectory, prompt, config, previousThreadId, onEvent }) {
-  const codex = new Codex({ env: sdkEnvironment(config) });
+export async function runCodexTurn({ taskDirectory, prompt, config, previousThreadId, onEvent, signal }) {
+  const codex = new Codex(sdkOptions(config));
   const options = sdkThreadOptions(taskDirectory, config);
   const thread = previousThreadId
     ? codex.resumeThread(previousThreadId, options)
     : codex.startThread(options);
   const events = [];
-  const stream = await thread.runStreamed(prompt);
+  const stream = await thread.runStreamed(prompt, { signal });
 
   for await (const event of stream.events) {
     events.push(event);

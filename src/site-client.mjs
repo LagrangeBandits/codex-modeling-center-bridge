@@ -1,6 +1,7 @@
 import path from "node:path";
 import { loadSecret } from "./state.mjs";
 import { normalizeAgent, platformId } from "./constants.mjs";
+import { normalizeTaskMessage, normalizeTaskPriority } from "./task-control.mjs";
 import { usagePayload } from "./usage.mjs";
 
 export function normalizeSite(value) {
@@ -113,8 +114,10 @@ export async function pollTask(config) {
   return siteRequest(config, "/api/runner/poll", { method: "GET" });
 }
 
-export async function sendEvent(config, taskId, stage, progress, message, telemetry = undefined) {
+export async function sendEvent(config, taskId, stage, progress, message, telemetry = undefined, context = undefined) {
   const payload = { taskId, stage, progress, message };
+  if (context && context.priority !== undefined) payload.priority = normalizeTaskPriority(context.priority);
+  if (context && context.executionMode) payload.executionMode = String(context.executionMode).slice(0, 20);
   if (telemetry !== undefined) Object.assign(payload, telemetryPayload(telemetry));
   return siteRequest(config, "/api/runner/events", {
     method: "POST",
@@ -122,8 +125,10 @@ export async function sendEvent(config, taskId, stage, progress, message, teleme
   });
 }
 
-export async function completeTask(config, taskId, status, summary = "", error = "", telemetry = undefined) {
+export async function completeTask(config, taskId, status, summary = "", error = "", telemetry = undefined, context = undefined) {
   const payload = { taskId, status, summary, error };
+  if (context && context.priority !== undefined) payload.priority = normalizeTaskPriority(context.priority);
+  if (context && context.executionMode) payload.executionMode = String(context.executionMode).slice(0, 20);
   if (telemetry !== undefined) Object.assign(payload, telemetryPayload(telemetry));
   return siteRequest(config, "/api/runner/complete", {
     method: "POST",
@@ -136,6 +141,51 @@ export async function sendHeartbeat(config, heartbeat) {
     method: "POST",
     body: JSON.stringify(heartbeat),
   });
+}
+
+function taskEndpoint(taskId, cursor) {
+  const query = new URLSearchParams({ taskId: String(taskId) });
+  if (cursor) query.set("after", String(cursor));
+  return `/api/runner/messages?${query.toString()}`;
+}
+
+/** Optional interactive bridge. A 404/405 is handled by the Runner as an old site. */
+export async function pollTaskControl(config, taskId, cursor = null) {
+  return siteRequest(config, taskEndpoint(taskId, cursor), { method: "GET" });
+}
+
+/** Send a redacted assistant summary to a site that stores task-local messages. */
+export async function sendTaskMessage(config, taskId, message, options = {}) {
+  const normalized = normalizeTaskMessage({ role: options.role || "assistant", content: message }, "assistant");
+  if (!normalized) throw new Error("网页消息为空，未发送。");
+  return siteRequest(config, "/api/runner/messages", {
+    method: "POST",
+    body: JSON.stringify({
+      taskId,
+      role: normalized.role,
+      message: normalized.content,
+      after: options.cursor || undefined,
+    }),
+  });
+}
+
+/** Report cancellation when the site has the optional endpoint. Legacy sites fall back to failed. */
+export async function cancelTask(config, taskId, reason = "", telemetry = undefined, context = undefined) {
+  const normalizedReason = normalizeTaskMessage(String(reason || "任务已取消"), "system")?.content || "任务已取消";
+  try {
+    return await siteRequest(config, "/api/runner/cancel", {
+      method: "POST",
+      body: JSON.stringify({ taskId, reason: normalizedReason, ...telemetryPayload(telemetry) }),
+    });
+  } catch (error) {
+    if (error?.status !== 404 && error?.status !== 405) throw error;
+    try {
+      return await completeTask(config, taskId, "cancelled", "", normalizedReason, telemetry, context);
+    } catch (cancelledError) {
+      if (cancelledError?.status !== 400 && cancelledError?.status !== 422) throw cancelledError;
+      return completeTask(config, taskId, "failed", "", `任务已取消；当前旧站点不支持 cancelled 状态。${normalizedReason}`, telemetry, context);
+    }
+  }
 }
 
 export async function reportTaskUsage(config, taskId, telemetry) {

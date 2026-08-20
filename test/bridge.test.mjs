@@ -9,6 +9,7 @@ import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs
 import { extractAgentUsage, usagePayload } from "../src/usage.mjs";
 import { heartbeatPayload } from "../src/heartbeat.mjs";
 import { identityFromEvents, providerFromBaseUrl, providerFromEvent, providerFromModel } from "../src/agent-identity.mjs";
+import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, taskPromptWithMessages, TaskCancelledError } from "../src/task-control.mjs";
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);
@@ -184,6 +185,30 @@ test("builds a heartbeat with null-safe metrics and no credentials", () => {
     memoryUsedBytes: null,
     memoryTotalBytes: null,
     load1m: null,
-    capabilities: ["task:direct", "task:plan", "agent:claude-code"],
+    capabilities: ["task:direct", "task:plan", "task:cancel", "task:priority", "bridge:messages", "agent:claude-code"],
   });
+});
+
+test("normalizes optional task control without uploading raw events", () => {
+  assert.equal(normalizeTaskPriority("12.9"), 12);
+  assert.equal(normalizeTaskPriority("not-a-number"), 0);
+  assert.deepEqual(normalizeTaskMessages([
+    { id: "m1", role: "user", content: "请补充一个安装孔。" },
+    { id: "m1", role: "user", content: "重复消息不应再次注入。" },
+    { role: "assistant", text: "不要把 token 放进消息。" },
+  ]), [
+    { id: "m1", role: "user", content: "请补充一个安装孔。" },
+    { id: null, role: "assistant", content: "不要把 token 放进消息。" },
+  ]);
+  assert.equal(taskPromptWithMessages("生成法兰", [{ role: "user", content: "孔距 30 mm" }]), "生成法兰\n\n## 网站补充消息\n- user: 孔距 30 mm");
+  assert.deepEqual(cancellationState({ cancel_requested_at: "2026-08-20T10:00:00Z" }), { requested: true, reason: null });
+  assert.deepEqual(normalizeControlPayload({ cursor: "next", messages: [{ content: "继续" }], cancelRequested: false }), {
+    cursor: "next",
+    cancelRequested: false,
+    cancelReason: null,
+    messages: [{ id: null, role: "user", content: "继续" }],
+  });
+  const error = new TaskCancelledError("网站取消");
+  assert.equal(error.code, "TASK_CANCELLED");
+  assert.equal(error.message, "网站取消");
 });
