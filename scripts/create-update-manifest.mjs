@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { platformAndArchitecture } from "./update-manifest-utils.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIRECTORY = path.resolve(SCRIPT_DIRECTORY, "..");
@@ -20,14 +21,6 @@ function normalizeVersion(value) {
 function fail(message) {
   console.error(message);
   process.exit(1);
-}
-
-function platformAndArchitecture(name) {
-  const lower = name.toLowerCase();
-  const platform = lower.endsWith(".exe") ? "windows" : "macos";
-  const architecture = /(?:^|[-_.])(arm64|aarch64)(?:[-_.]|\.)/i.test(name) ? "arm64" : "x64";
-  const type = lower.endsWith(".blockmap") ? "blockmap" : lower.endsWith(".zip") ? "update-archive" : "installer";
-  return { platform, architecture, type };
 }
 
 function yamlValue(content, key) {

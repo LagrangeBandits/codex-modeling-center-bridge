@@ -9,7 +9,7 @@
   },
   "main": "desktop/main.mjs",
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/runner.mjs && node --check src/codex-session.mjs && node --check src/claude-session.mjs && node --check src/agent-session.mjs && node --check src/agent-identity.mjs && node --check src/heartbeat.mjs && node --check src/usage.mjs && node --check src/task-control.mjs && node --check src/site-client.mjs && node --check src/desktop-runtime.mjs && node --check src/update-manager.mjs && node --check desktop/main.mjs && node --check desktop/renderer.mjs",
+    "check": "node --check src/cli.mjs && node --check src/runner.mjs && node --check src/codex-session.mjs && node --check src/claude-session.mjs && node --check src/agent-session.mjs && node --check src/agent-identity.mjs && node --check src/heartbeat.mjs && node --check src/usage.mjs && node --check src/task-control.mjs && node --check src/site-client.mjs && node --check src/desktop-runtime.mjs && node --check src/update-manager.mjs && node --check scripts/update-manifest-utils.mjs && node --check scripts/create-update-manifest.mjs && node --check scripts/validate-release-version.mjs && node --check scripts/verify-packaged-update-config.mjs && node --check desktop/main.mjs && node --check desktop/renderer.mjs",
     "test": "node --test",
     "doctor": "node src/cli.mjs doctor",
     "start": "node src/cli.mjs start",

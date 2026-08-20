@@ -14,6 +14,7 @@ import { identityFromEvents, providerFromBaseUrl, providerFromEvent, providerFro
 import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, taskPromptWithMessages, TaskCancelledError } from "../src/task-control.mjs";
 import { resolveTaskPreferences } from "../src/runner.mjs";
 import { compareVersions, createUpdateController, normalizeDownloadProgress, normalizeUpdateInfo, UPDATE_STATUS } from "../src/update-manager.mjs";
+import { platformAndArchitecture } from "../scripts/update-manifest-utils.mjs";
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);
@@ -406,4 +407,22 @@ test("sanitizes updater event errors before exposing them to the renderer", () =
   assert.equal(state.status, UPDATE_STATUS.ERROR);
   assert.equal(state.error.includes("secret-token"), false);
   assert.equal(state.error.includes("private.example"), false);
+});
+
+test("classifies Windows EXE blockmaps as Windows x64 assets", () => {
+  assert.deepEqual(platformAndArchitecture("Modeling-Center-Bridge-Setup-0.1.10.exe"), {
+    platform: "windows",
+    architecture: "x64",
+    type: "installer",
+  });
+  assert.deepEqual(platformAndArchitecture("Modeling-Center-Bridge-Setup-0.1.10.exe.blockmap"), {
+    platform: "windows",
+    architecture: "x64",
+    type: "blockmap",
+  });
+  assert.deepEqual(platformAndArchitecture("Modeling-Center-Bridge-0.1.10-arm64.zip.blockmap"), {
+    platform: "macos",
+    architecture: "arm64",
+    type: "blockmap",
+  });
 });
