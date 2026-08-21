@@ -75,6 +75,8 @@ Electron 主进程使用窄 IPC 接口处理文件、配对和 Runner；渲染�
 
 桌面程序使用公开 GitHub Release 检查更新，不内置 GitHub token。启动后会延迟检查一次，也可以在主界面的“软件更新”区域手动检查。发现新版本后不会自动下载；需要先点击“下载更新”，下载完成后再确认“重启并安装”。Runner 正在运行时不会执行重启安装。正式安装包内的 `app-update.yml`、Release 中的 `latest.yml`/`latest-mac.yml` 均由 electron-builder 根据实际构建配置生成；发布流程另外生成并校验 `update-manifest.json`。
 
+关闭主窗口不会停止 Bridge 或 Runner，程序会缩小到系统托盘继续运行。点击托盘图标可重新打开窗口；需要真正退出时，请在托盘菜单选择“退出 Bridge”。如果 Runner 正在运行，退出前会明确提示，因为退出会停止本机 Runner。
+
 当前 Release 使用未签名构建。macOS 首次打开可能需要在“系统设置 → 隐私与安全性”中允许，Windows 可能显示 SmartScreen 提示；这不代表安装包包含网站授权或 Agent 登录信息。正式分发前应补充 Apple Developer 签名/公证和 Windows 代码签名证书。
 
 ## 从网站配对

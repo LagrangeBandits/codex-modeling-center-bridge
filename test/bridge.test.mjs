@@ -15,6 +15,14 @@ import { cancellationState, normalizeControlPayload, normalizeTaskMessages, norm
 import { resolveTaskPreferences } from "../src/runner.mjs";
 import { compareVersions, createUpdateController, normalizeDownloadProgress, normalizeUpdateInfo, UPDATE_STATUS } from "../src/update-manager.mjs";
 import { platformAndArchitecture } from "../scripts/update-manifest-utils.mjs";
+import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
+
+test("closes the desktop window into the tray unless the user explicitly quits", () => {
+  assert.equal(shouldHideToTray(false), true);
+  assert.equal(shouldHideToTray(true), false);
+  assert.equal(trayRunnerLabel({ running: true }), "Runner 运行中");
+  assert.equal(trayRunnerLabel({ running: false }), "Runner 未启动");
+});
 
 test("parses boolean and value flags without shell evaluation", () => {
   const parsed = parseArgs(["--site", "https://example.test", "--yes", "--concurrency=2", "pull"]);

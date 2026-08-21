@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9,17 +9,22 @@ import { bootstrapModelingEnvironment, inspectEnvironment } from "../src/modelin
 import { normalizeSite, pairSite } from "../src/site-client.mjs";
 import { loadConfig } from "../src/state.mjs";
 import { prepareNodeRuntime, resolveBridgeNode, runtimeEnvironment } from "../src/desktop-runtime.mjs";
+import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
 import { createInitialUpdateState, createUpdateController } from "../src/update-manager.mjs";
 
 const { autoUpdater } = electronUpdater;
 
 const DESKTOP_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
 let runnerProcess = null;
 let runnerState = { running: false, pid: null, agent: null, output: [] };
 let environmentPreparation = null;
 let updateController = null;
 let startupUpdateTimer = null;
+
+const TRAY_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAoElEQVR4nO3Vyw2AMAwD0O7ACTEaMzMTLJA6ThwVgVIpJ6T6kf7G6BEY27HfTL0WXA7JBpdArImu+6RKRijhMkIN9iAyAKFm32iA13qvKwhNIRCAWRYPDgGzI2RNwK53aENGznVk5zegAQ34PmDZRTRDLLuKPcCSx8hCWJMhgNcZGM4AohX6e3YpMsF0eAVCDkeITKXCKyBycBZSHvzr8QDxueTt/Mfp2AAAAABJRU5ErkJggg==";
 
 function bridgeRoot() {
   if (app.isPackaged) return path.join(process.resourcesPath, "app.asar.unpacked");
@@ -63,6 +68,61 @@ function rememberOutput(stream, chunk) {
 
 function runnerStatus() {
   return { ...runnerState, output: [...runnerState.output] };
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function refreshTrayMenu() {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "打开 Bridge", click: showMainWindow },
+    {
+      label: "检查更新",
+      click: () => {
+        showMainWindow();
+        void updateController?.check();
+      },
+    },
+    { type: "separator" },
+    { label: "Bridge 正在后台运行", enabled: false },
+    { label: trayRunnerLabel(runnerState), enabled: false },
+    { type: "separator" },
+    { label: "退出 Bridge", click: () => { void quitBridge(); } },
+  ]));
+}
+
+function createTray() {
+  if (tray) return;
+  const icon = nativeImage.createFromDataURL(TRAY_ICON_DATA_URL);
+  tray = new Tray(icon);
+  tray.setToolTip("Modeling Center Bridge · 后台运行");
+  tray.on("click", showMainWindow);
+  tray.on("double-click", showMainWindow);
+  refreshTrayMenu();
+}
+
+async function quitBridge() {
+  if (runnerProcess) {
+    const result = await dialog.showMessageBox({
+      type: "warning",
+      buttons: ["取消", "退出 Bridge"],
+      defaultId: 0,
+      cancelId: 0,
+      title: "退出 Bridge",
+      message: "Runner 正在运行",
+      detail: "退出 Bridge 会停止本机 Runner；正在执行的任务可能需要重新提交。",
+    });
+    if (result.response !== 1) return;
+  }
+  isQuitting = true;
+  tray?.destroy();
+  tray = null;
+  app.quit();
 }
 
 function updateStatus() {
@@ -127,6 +187,7 @@ async function startRunner(input = {}) {
   });
   runnerProcess = child;
   runnerState = { running: true, pid: child.pid || null, agent: selectedAgent, output: [] };
+  refreshTrayMenu();
   sendRunnerEvent("started", { pid: child.pid || null, agent: selectedAgent, agentLabel: agentLabel(selectedAgent), node: runtime.version });
   child.stdout.on("data", (chunk) => rememberOutput("stdout", chunk));
   child.stderr.on("data", (chunk) => rememberOutput("stderr", chunk));
@@ -137,6 +198,7 @@ async function startRunner(input = {}) {
   child.on("close", (code, signal) => {
     runnerProcess = null;
     runnerState = { ...runnerState, running: false, pid: null };
+    refreshTrayMenu();
     sendRunnerEvent("stopped", { code, signal });
   });
   return runnerStatus();
@@ -199,6 +261,12 @@ function createWindow() {
     },
   });
   mainWindow.loadFile(path.join(DESKTOP_DIRECTORY, "index.html"));
+  mainWindow.on("close", (event) => {
+    if (!shouldHideToTray(isQuitting)) return;
+    event.preventDefault();
+    mainWindow.hide();
+    refreshTrayMenu();
+  });
   mainWindow.on("closed", () => { mainWindow = null; });
 }
 
@@ -228,6 +296,7 @@ app.whenReady().then(() => {
   });
   updateController.initialize();
   createWindow();
+  createTray();
   if (app.isPackaged) {
     startupUpdateTimer = setTimeout(() => {
       startupUpdateTimer = null;
@@ -236,15 +305,14 @@ app.whenReady().then(() => {
     startupUpdateTimer.unref?.();
   }
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
 });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
-
 app.on("before-quit", () => {
+  isQuitting = true;
   if (startupUpdateTimer) clearTimeout(startupUpdateTimer);
+  tray?.destroy();
+  tray = null;
   if (runnerProcess) runnerProcess.kill();
 });
