@@ -1,6 +1,6 @@
 {
   "name": "codex-modeling-center-bridge",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Cross-platform desktop bridge for a private CAD modeling center",
   "license": "MIT",
   "type": "module",
@@ -41,7 +41,8 @@
     "asarUnpack": [
       "src/**",
       "templates/**",
-      "node_modules/**"
+      "node_modules/**",
+      "package.json"
     ],
     "files": [
       "desktop/**/*",

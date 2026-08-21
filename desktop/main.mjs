@@ -10,7 +10,7 @@ import { normalizeSite, pairSite } from "../src/site-client.mjs";
 import { loadConfig } from "../src/state.mjs";
 import { prepareNodeRuntime, resolveBridgeNode, runtimeEnvironment } from "../src/desktop-runtime.mjs";
 import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
-import { createInitialUpdateState, createUpdateController } from "../src/update-manager.mjs";
+import { createInitialUpdateState, createUpdateController, UPDATE_STATUS } from "../src/update-manager.mjs";
 
 const { autoUpdater } = electronUpdater;
 
@@ -23,6 +23,9 @@ let runnerState = { running: false, pid: null, agent: null, output: [] };
 let environmentPreparation = null;
 let updateController = null;
 let startupUpdateTimer = null;
+let updatePromptPromise = null;
+let promptedUpdateVersion = null;
+let promptedDownloadedVersion = null;
 
 const TRAY_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAoElEQVR4nO3Vyw2AMAwD0O7ACTEaMzMTLJA6ThwVgVIpJ6T6kf7G6BEY27HfTL0WXA7JBpdArImu+6RKRijhMkIN9iAyAKFm32iA13qvKwhNIRCAWRYPDgGzI2RNwK53aENGznVk5zegAQ34PmDZRTRDLLuKPcCSx8hCWJMhgNcZGM4AohX6e3YpMsF0eAVCDkeITKXCKyBycBZSHvzr8QDxueTt/Mfp2AAAAABJRU5ErkJggg==";
 
@@ -246,6 +249,74 @@ async function openUpdateNotes() {
   return { opened: true };
 }
 
+function updateDialogParent() {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+}
+
+async function promptForUpdate(state) {
+  if (!app.isPackaged || !state?.update?.version) return;
+  if (updatePromptPromise) return updatePromptPromise;
+
+  if (state.status === UPDATE_STATUS.AVAILABLE) {
+    const version = state.update.version;
+    if (promptedUpdateVersion === version) return;
+    promptedUpdateVersion = version;
+    updatePromptPromise = (async () => {
+      showMainWindow();
+      const result = await dialog.showMessageBox(updateDialogParent(), {
+        type: "info",
+        title: "发现 Bridge 更新",
+        message: `发现新版本 v${version}`,
+        detail: state.update.releaseNotes
+          ? `${state.update.releaseNotes}\n\n下载和安装前会保留当前版本；Runner 正在运行时不会自动安装。`
+          : "下载和安装前会保留当前版本；Runner 正在运行时不会自动安装。",
+        buttons: ["稍后提醒", "查看更新说明", "下载更新"],
+        defaultId: 2,
+        cancelId: 0,
+      });
+      if (result.response === 1) {
+        await openUpdateNotes();
+      } else if (result.response === 2) {
+        await updateController?.download();
+      }
+    })().catch((error) => {
+      console.warn(`更新弹窗：${redact(error.message || String(error))}`);
+    }).finally(() => {
+      updatePromptPromise = null;
+    });
+    return updatePromptPromise;
+  }
+
+  if (state.status === UPDATE_STATUS.DOWNLOADED) {
+    const version = state.update.version;
+    if (promptedDownloadedVersion === version) return;
+    promptedDownloadedVersion = version;
+    updatePromptPromise = (async () => {
+      showMainWindow();
+      const runnerRunning = runnerStatus().running;
+      const result = await dialog.showMessageBox(updateDialogParent(), {
+        type: runnerRunning ? "warning" : "info",
+        title: "Bridge 更新已下载",
+        message: `v${version} 已下载完成`,
+        detail: runnerRunning
+          ? "请先停止 Runner，再在软件更新区域点击“重启并安装”。"
+          : "确认后 Bridge 将退出并重启，安装新版本。",
+        buttons: runnerRunning ? ["知道了"] : ["稍后安装", "重启并安装"],
+        defaultId: runnerRunning ? 0 : 1,
+        cancelId: 0,
+      });
+      if (!runnerRunning && result.response === 1) {
+        await updateController?.install();
+      }
+    })().catch((error) => {
+      console.warn(`更新安装弹窗：${redact(error.message || String(error))}`);
+    }).finally(() => {
+      updatePromptPromise = null;
+    });
+    return updatePromptPromise;
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 980,
@@ -291,6 +362,7 @@ app.whenReady().then(() => {
     getRunnerStatus: runnerStatus,
     onState: (state) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("update:event", state);
+      void promptForUpdate(state);
     },
     log: (message) => console.warn(`更新：${message}`),
   });

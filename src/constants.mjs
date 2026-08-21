@@ -11,7 +11,9 @@ try {
 }
 
 export const APP_NAME = "Codex Modeling Center Bridge";
-export const BRIDGE_VERSION = packageVersion;
+export const BRIDGE_VERSION = packageVersion === "unknown" || packageVersion.startsWith("v")
+  ? packageVersion
+  : `v${packageVersion}`;
 export const CONFIG_VERSION = 1;
 export const DEFAULT_AGENT = "codex";
 export const SUPPORTED_AGENTS = new Set(["codex", "claude"]);

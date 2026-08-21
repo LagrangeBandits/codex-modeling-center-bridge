@@ -5,7 +5,7 @@ import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
 import { normalizeSite, siteAgentValue, siteRequest, uploadArtifact } from "../src/site-client.mjs";
 import { createModelingClient } from "../src/vendor/modeling-platform-contracts/2f61b5e/sdk.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
-import { agentLabel, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
+import { agentLabel, BRIDGE_VERSION, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
 import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs";
 import { extractAgentUsage, usagePayload } from "../src/usage.mjs";
@@ -22,6 +22,10 @@ test("closes the desktop window into the tray unless the user explicitly quits",
   assert.equal(shouldHideToTray(true), false);
   assert.equal(trayRunnerLabel({ running: true }), "Runner 运行中");
   assert.equal(trayRunnerLabel({ running: false }), "Runner 未启动");
+});
+
+test("reports the packaged Bridge release as a user-facing semantic version", () => {
+  assert.match(BRIDGE_VERSION, /^v\d+\.\d+\.\d+$/);
 });
 
 test("parses boolean and value flags without shell evaluation", () => {
