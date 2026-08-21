@@ -1,6 +1,6 @@
 {
   "name": "codex-modeling-center-bridge",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Cross-platform desktop bridge for a private CAD modeling center",
   "license": "MIT",
   "type": "module",

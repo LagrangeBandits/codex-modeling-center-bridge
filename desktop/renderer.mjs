@@ -5,6 +5,8 @@ let latestStatus = null;
 let latestUpdateState = null;
 let environmentBusy = false;
 let startingRunner = false;
+let feedbackAutomatic = false;
+let feedbackContext = {};
 
 function setMessage(message, isError = false) {
   const target = $("statusMessage");
@@ -218,8 +220,18 @@ function closePairing() {
   if (dialog.open) dialog.close();
 }
 
-function openFeedback() {
-  setFeedbackMessage("");
+function openFeedback(prefill = {}) {
+  feedbackAutomatic = Boolean(prefill.automatic);
+  feedbackContext = prefill.context && typeof prefill.context === "object" ? prefill.context : {};
+  $("feedbackModalTitle").textContent = feedbackAutomatic ? "是否上传异常反馈？" : "反馈异常";
+  $("feedbackModalIntro").textContent = feedbackAutomatic
+    ? "异常日志已经先保存到本机。你可以上传脱敏摘要帮助改进；选择“仅保留本地日志”则不会上传。"
+    : "反馈会先保存到云端建模中心。提交时只会附带脱敏的运行摘要，不会上传站点授权、API 密钥或完整聊天记录。";
+  $("feedbackSubmitButton").textContent = feedbackAutomatic ? "上传反馈" : "提交反馈";
+  $("closeFeedbackButtonSecondary").textContent = feedbackAutomatic ? "仅保留本地日志" : "取消";
+  $("feedbackCategory").value = prefill.category || "cli";
+  $("feedbackMessage").value = prefill.message || "";
+  setFeedbackMessage(prefill.notice || "");
   const dialog = $("feedbackDialog");
   if (!dialog.open) dialog.showModal();
   $("feedbackMessage")?.focus();
@@ -228,6 +240,14 @@ function openFeedback() {
 function closeFeedback() {
   const dialog = $("feedbackDialog");
   if (dialog.open) dialog.close();
+  feedbackAutomatic = false;
+  feedbackContext = {};
+}
+
+function dismissFeedback() {
+  const automatic = feedbackAutomatic;
+  closeFeedback();
+  if (automatic) setMessage("异常日志已保留在本机，未上传反馈。");
 }
 
 async function submitFeedback(event) {
@@ -245,6 +265,7 @@ async function submitFeedback(event) {
       category: $("feedbackCategory").value,
       message,
       context: {
+        ...feedbackContext,
         page: "bridge",
         selectedAgent: $("agent").value,
         paired: Boolean(latestStatus?.config?.paired),
@@ -404,8 +425,8 @@ $("releaseNotesButton").addEventListener("click", openUpdateNotes);
 $("feedbackButton").addEventListener("click", openFeedback);
 $("closePairingButton").addEventListener("click", closePairing);
 $("cancelPairingButton").addEventListener("click", closePairing);
-$("closeFeedbackButton").addEventListener("click", closeFeedback);
-$("closeFeedbackButtonSecondary").addEventListener("click", closeFeedback);
+$("closeFeedbackButton").addEventListener("click", dismissFeedback);
+$("closeFeedbackButtonSecondary").addEventListener("click", dismissFeedback);
 $("pairingForm").addEventListener("submit", submitPairing);
 $("feedbackForm").addEventListener("submit", submitFeedback);
 $("startButton").addEventListener("click", startRunner);
@@ -419,6 +440,8 @@ api.onRunnerEvent((event) => {
   if (event.type === "started") addLog(`Runner 已启动，使用 ${event.agentLabel}。`);
   if (event.type === "stopped") addLog(`Runner 已停止（退出码 ${event.code ?? "未知"}）。`);
   if (event.type === "error") setMessage(event.message, true);
+  if (event.type === "error-saved") setMessage(event.message, Boolean(event.saved === false));
+  if (event.type === "feedback-prompt") openFeedback({ automatic: true, category: event.category, message: event.message, context: event.context, notice: "日志已保存到本机，请选择是否上传反馈。" });
   if (["started", "stopped"].includes(event.type)) {
     api.runnerStatus().then((state) => {
       if (latestStatus) latestStatus.runner = state;

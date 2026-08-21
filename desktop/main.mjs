@@ -19,7 +19,7 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 let runnerProcess = null;
-let runnerState = { running: false, pid: null, agent: null, output: [] };
+let runnerState = { running: false, pid: null, agent: null, output: [], stopRequested: false, feedbackPrompted: false };
 let environmentPreparation = null;
 let updateController = null;
 let startupUpdateTimer = null;
@@ -67,6 +67,46 @@ function rememberOutput(stream, chunk) {
   const lines = String(chunk).split(/\r?\n/).map((line) => redact(line)).filter(Boolean);
   runnerState.output = [...runnerState.output, ...lines].slice(-80);
   for (const line of lines) sendRunnerEvent("output", { stream, line });
+}
+
+async function saveRunnerErrorFeedback({ message, code = null, signal = null }) {
+  if (runnerState.feedbackPrompted) return;
+  runnerState = { ...runnerState, feedbackPrompted: true };
+  const safeMessage = redact(message).slice(0, 2_000);
+  const snapshotId = `runner-error-${Date.now()}`;
+  const snapshot = {
+    id: snapshotId,
+    createdAt: new Date().toISOString(),
+    category: "cli",
+    message: safeMessage,
+    platform: process.platform,
+    softwareVersion: app.getVersion(),
+    agent: runnerState.agent,
+    code,
+    signal,
+    output: runnerState.output.join("\n").slice(-12_000),
+  };
+  try {
+    const directory = path.join(app.getPath("userData"), "feedback");
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, `${snapshotId}.json`), `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    const config = await loadConfig().catch(() => ({}));
+    sendRunnerEvent("error-saved", { message: "异常日志已保存到本机。" });
+    sendRunnerEvent("feedback-prompt", {
+      snapshotId,
+      category: snapshot.category,
+      message: safeMessage || "Runner 出现异常。",
+      context: {
+        page: "bridge",
+        error: safeMessage,
+        selectedAgent: runnerState.agent || "",
+        paired: Boolean(config.site),
+        runnerOutput: snapshot.output,
+      },
+    });
+  } catch (error) {
+    sendRunnerEvent("error-saved", { saved: false, message: `异常日志保存失败：${redact(error.message || String(error))}` });
+  }
 }
 
 function runnerStatus() {
@@ -211,7 +251,7 @@ async function startRunner(input = {}) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   runnerProcess = child;
-  runnerState = { running: true, pid: child.pid || null, agent: selectedAgent, output: [] };
+  runnerState = { running: true, pid: child.pid || null, agent: selectedAgent, output: [], stopRequested: false, feedbackPrompted: false };
   refreshTrayMenu();
   sendRunnerEvent("started", { pid: child.pid || null, agent: selectedAgent, agentLabel: agentLabel(selectedAgent), node: runtime.version });
   child.stdout.on("data", (chunk) => rememberOutput("stdout", chunk));
@@ -219,8 +259,11 @@ async function startRunner(input = {}) {
   child.on("error", (error) => {
     rememberOutput("stderr", `Runner 启动失败：${error.message}`);
     sendRunnerEvent("error", { message: redact(error.message) });
+    void saveRunnerErrorFeedback({ message: `Runner 启动失败：${error.message}` });
   });
   child.on("close", (code, signal) => {
+    const abnormal = !runnerState.stopRequested && ((code !== null && code !== 0) || Boolean(signal));
+    if (abnormal) void saveRunnerErrorFeedback({ message: `Runner 异常退出（退出码 ${code ?? "未知"}${signal ? `，信号 ${signal}` : ""}）。`, code, signal });
     runnerProcess = null;
     runnerState = { ...runnerState, running: false, pid: null };
     refreshTrayMenu();
@@ -230,7 +273,10 @@ async function startRunner(input = {}) {
 }
 
 async function stopRunner() {
-  if (runnerProcess) runnerProcess.kill();
+  if (runnerProcess) {
+    runnerState = { ...runnerState, stopRequested: true };
+    runnerProcess.kill();
+  }
   return runnerStatus();
 }
 
