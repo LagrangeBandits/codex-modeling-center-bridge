@@ -11,7 +11,7 @@ const sourceRoot = path.resolve(
   process.env.MODELING_PLATFORM_CONTRACTS_SOURCE ||
     path.join(repositoryRoot, "..", "modeling-platform-contracts"),
 );
-const sourceCommit = "2f61b5ebfadc32221c1d023793a2522f5f69744b";
+const sourceCommit = "00a02e5902e350c0b1dca4bdda928de7b7ca2f91";
 const sourceBranch = "codex/contracts-sdk-v1";
 const vendorRoot = path.join(
   repositoryRoot,

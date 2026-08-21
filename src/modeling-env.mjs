@@ -3,6 +3,7 @@ import path from "node:path";
 import { appDataDirectory, defaultModelingEnvironment, DEFAULT_CAD_PACKAGE, DEFAULT_NODE_VERSION, DEFAULT_PYTHON_VERSION, DEFAULT_UV_VERSION, isSupportedNodeVersion } from "./constants.mjs";
 import { resolveCommand, runtimeEnvironment } from "./desktop-runtime.mjs";
 import { commandVersion, execFileText, runCommand } from "./process.mjs";
+import { discoverAgents } from "./cli-agents.mjs";
 
 const MIN_PYTHON_MAJOR = 3;
 const MIN_PYTHON_MINOR = 11;
@@ -149,6 +150,8 @@ export async function inspectEnvironment(config = {}, options = {}) {
   const activePython = environmentPython || systemPython;
   const nodeRuntime = options.nodeRuntime || null;
   const node = options.requireExternalNode ? nodeRuntime?.version || null : process.version;
+  const agents = await discoverAgents(config);
+  const agentById = Object.fromEntries(agents.map((agent) => [agent.id, agent]));
   return {
     node,
     nodeSupported: options.requireExternalNode ? Boolean(nodeRuntime) : isSupportedNodeVersion(process.version),
@@ -159,8 +162,9 @@ export async function inspectEnvironment(config = {}, options = {}) {
     modelingPython: activePython,
     systemPython,
     cadquery: await checkCadQuery(activePython),
-    codex: await checkCodex(),
-    claude: await checkClaude(),
+    codex: agentById.codex || await checkCodex(),
+    claude: agentById.claude || await checkClaude(),
+    agents,
     uv: await checkUv(),
     chatgptApiKeyDetected: Boolean(process.env.OPENAI_API_KEY),
   };
@@ -354,6 +358,7 @@ export function formatDoctor(report) {
     `Node: ${report.nodeSupported ? `${yes} ${report.node}` : `${no} ${report.node}（需要 ${report.nodeRequirement || `${DEFAULT_NODE_VERSION}+`}）`}`,
     `Codex CLI: ${report.codex.installed ? `${yes} ${report.codex.version}` : `${no} 未发现`}`,
     `Claude Code: ${report.claude.installed ? `${yes} ${report.claude.version}` : `${no} 未发现（可选）`}`,
+    ...(Array.isArray(report.agents) ? report.agents.filter((agent) => !["codex", "claude"].includes(agent.id)).map((agent) => `${agent.label}: ${agent.installed ? `${yes} ${agent.version || "可用"}` : `${no} 未发现（可选）`}`) : []),
     `Python: ${report.modelingPython ? `${yes} ${report.modelingPython.executable} (${report.modelingPython.version})` : `${no} 未发现 Python ${DEFAULT_PYTHON_VERSION}+`}`,
     `CadQuery: ${report.cadquery.installed ? `${yes} ${report.cadquery.version}` : `${no} 未安装`}`,
     `uv: ${report.uv.installed ? `${yes} ${report.uv.version}` : `${no} 未发现（可选）`}`,

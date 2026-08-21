@@ -11,7 +11,22 @@ function emptyUsage() {
 function terminalEventForAgent(agent, event) {
   if (agent === "codex") return event?.type === "turn.completed";
   if (agent === "claude" || agent === "claude-code") return event?.type === "result";
-  return Boolean(event?.usage);
+  return Boolean(usageObjectFromEvent(event));
+}
+
+function usageObjectFromEvent(event) {
+  if (!event || typeof event !== "object") return null;
+  if (event.usage && typeof event.usage === "object") return event.usage;
+  if (event.stats && typeof event.stats === "object") {
+    if (event.stats.tokens && typeof event.stats.tokens === "object") return event.stats.tokens;
+    return event.stats;
+  }
+  if (event.result && typeof event.result === "object") {
+    if (event.result.usage && typeof event.result.usage === "object") return event.result.usage;
+    if (event.result.stats && typeof event.result.stats === "object") return event.result.stats;
+  }
+  if (event.metrics && typeof event.metrics === "object") return event.metrics;
+  return null;
 }
 
 /**
@@ -24,7 +39,7 @@ export function normalizeUsage(raw) {
 
 export function extractUsageFromEvent(agent, event) {
   if (!terminalEventForAgent(agent, event)) return null;
-  return normalizeUsage(event?.usage);
+  return normalizeUsage(usageObjectFromEvent(event));
 }
 
 export function extractAgentUsage(agent, events) {
@@ -37,7 +52,7 @@ export function extractAgentUsage(agent, events) {
       reason: `${agent} 本地响应没有可识别的终结用量事件。`,
     };
   }
-  return normalizeUsage(event.usage);
+  return normalizeUsage(usageObjectFromEvent(event));
 }
 
 function modelName(value) {

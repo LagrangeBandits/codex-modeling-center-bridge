@@ -1,6 +1,7 @@
 import { normalizeAgent } from "./constants.mjs";
 import { runClaudeTurn } from "./claude-session.mjs";
 import { runCodexTurn } from "./codex-session.mjs";
+import { runCliTurn } from "./cli-agents.mjs";
 import { identityFromEvents, loadLocalAgentIdentity } from "./agent-identity.mjs";
 import { usagePayload } from "./usage.mjs";
 
@@ -10,7 +11,7 @@ export async function runAgentTurn({ agent, taskDirectory, prompt, config, previ
   let result;
   if (selectedAgent === "claude") {
     result = await runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent, signal });
-  } else {
+  } else if (selectedAgent === "codex") {
     result = await runCodexTurn({
       taskDirectory,
       prompt,
@@ -19,6 +20,8 @@ export async function runAgentTurn({ agent, taskDirectory, prompt, config, previ
       onEvent,
       signal,
     });
+  } else {
+    result = await runCliTurn({ agent: selectedAgent, taskDirectory, prompt, config, previousSession, onEvent, signal });
   }
   const identity = identityFromEvents(selectedAgent, result.events, localIdentity);
   return {
@@ -31,7 +34,7 @@ export async function runAgentTurn({ agent, taskDirectory, prompt, config, previ
 
 export function sessionReference(session) {
   if (!session) return null;
-  if (session.agent === "claude" && session.sessionId) return session.sessionId;
+  if ((session.agent === "claude" || session.sessionId) && session.sessionId) return session.sessionId;
   if (session.threadId) return session.threadId;
   return null;
 }

@@ -6,16 +6,17 @@
 
 - 程序只连接私有建模网站，不是个人 Codex/Claude 聊天同步器。
 - 每个网站任务在领取设备上使用一个任务绑定的本地 Agent 会话；不会扫描、上传或复制用户完整的 Codex/Claude 历史。
-- 建模 Agent 可选 `Codex` 或 `Claude Code`。它们只是本机建模引擎选项，二者的登录状态和额度仍由设备使用者自己管理。
+- 建模 Agent 支持自动发现和选择 `Codex`、`Claude Code`、`Gemini CLI`、`Qwen Code`、`Trae Agent CLI`、`OpenCode`、`GitHub Copilot CLI`、`Aider`；也可以通过本机 `config.json` 的 `cliAgents` 添加兼容的自定义 CLI。登录状态和额度仍由设备使用者自己管理。
 - 新设备可以由安装脚本准备 Node.js 24、Python 3.11、虚拟环境和 CadQuery/OpenCascade；Agent CLI 的安装和首次登录由设备使用者确认完成。
 - 生成 STEP、参数化脚本、验证报告和脱敏摘要后，Runner 才会把允许的交付文件上传到网站。
 
 ## Agent 与登录边界
 
-Codex 和 Claude Code 都从本机启动，网站不会获得任何 Agent 登录状态。
+所有 Agent 都从本机启动，网站不会获得任何 Agent 登录状态。Bridge 会在 `doctor` 和启动时探测内置 CLI 的可执行文件与版本；自定义 CLI 通过无 shell 的参数数组接入，不会执行任意 shell 字符串。
 
 - Codex：设备使用者按 [OpenAI 官方 Codex CLI 文档](https://learn.chatgpt.com/docs/codex/cli) 安装并完成自己的登录。
 - Claude Code：设备使用者按 [Claude Code 官方安装文档](https://code.claude.com/docs/en/getting-started) 安装并完成自己的本地登录。
+- Gemini CLI、Qwen Code、Trae Agent CLI、OpenCode、GitHub Copilot CLI 和 Aider 也必须由设备使用者自行安装、登录并确认其本机权限；Bridge 只负责把网站任务交给已配对设备上的 CLI。
 - 不要设置共享 API key 来替代本机登录。Codex Runner 会提示 `OPENAI_API_KEY` 可能改变计费路径；Claude 子进程会移除 `ANTHROPIC_API_KEY` 和 `ANTHROPIC_AUTH_TOKEN`。
 - Claude Code 的沙箱在 macOS/Linux 可用，原生 Windows 不提供相同的内置沙箱。Windows 无人值守使用 Claude Agent 时，应先准备 WSL2；不满足沙箱条件时程序会失败并提示，不会自动降级到无保护执行。Windows 本机可选择 Codex。
 

@@ -35,7 +35,7 @@ The program connects a private modeling website to a user's own Mac or Windows d
 
 ## Agent boundary
 
-Both adapters receive the same task-local `AGENTS.md` modeling rules and use the same Python/CadQuery environment. The Codex adapter preserves existing task records using `threadId`; the Claude adapter uses Claude Code's local `session_id`. Older Codex records without an `agent` field remain readable as Codex records.
+All Agent adapters receive the same task-local `AGENTS.md` modeling rules and use the same Python/CadQuery environment. Codex and Claude Code retain their native SDK/CLI session handling. Other built-in or custom CLI profiles run through the no-shell generic adapter, which accepts only explicit argument arrays and normalizes text/JSON/JSONL output. Older Codex records without an `agent` field remain readable as Codex records.
 
 Claude runs as a subprocess with `stream-json`, a task-local settings file, a no-network allowlist, and a sandbox requirement. Native Windows Claude sandbox support is limited by Claude Code itself; unattended Claude tasks on Windows should run through WSL2. Codex remains available as the native Windows option.
 
@@ -51,7 +51,7 @@ The Electron renderer has no Node integration. Context isolation and a narrow pr
 
 - Pairing codes expire and can be used once.
 - Polling is safe to repeat; the server-side conditional claim prevents duplicate work.
-- A task with an Agent different from the runner's configured Agent is rejected and reported failed rather than silently using another login.
+- A task with an Agent different from the runner's configured Agent is rejected and reported failed rather than silently using another login or CLI.
 - A failed task is reported as failed and leaves its local task directory for inspection.
 - A failed dependency update does not delete an existing virtual environment.
 - A runner can be restarted; queued tasks remain queued on the site.

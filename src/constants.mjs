@@ -16,12 +16,28 @@ export const BRIDGE_VERSION = packageVersion === "unknown" || packageVersion.sta
   : `v${packageVersion}`;
 export const CONFIG_VERSION = 1;
 export const DEFAULT_AGENT = "codex";
-export const SUPPORTED_AGENTS = new Set(["codex", "claude"]);
+export const SUPPORTED_AGENTS = new Set([
+  "codex",
+  "claude",
+  "gemini",
+  "qwen",
+  "trae",
+  "opencode",
+  "copilot",
+  "aider",
+]);
+export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const DEFAULT_EXECUTION_MODE = "direct";
 export const SUPPORTED_EXECUTION_MODES = new Set(["direct", "plan"]);
 export const AGENT_LABELS = {
   codex: "Codex",
   claude: "Claude Code",
+  gemini: "Gemini CLI",
+  qwen: "Qwen Code",
+  trae: "Trae Agent CLI",
+  opencode: "OpenCode",
+  copilot: "GitHub Copilot CLI",
+  aider: "Aider",
 };
 export const DEFAULT_NODE_VERSION = "24";
 export const DEFAULT_NODE_RELEASE = "24.19.0";
@@ -39,9 +55,9 @@ export function isSupportedNodeVersion(value) {
 
 export function normalizeAgent(value, fallback = DEFAULT_AGENT) {
   const raw = String(value || fallback).trim().toLowerCase();
-  const agent = raw === "claude-code" ? "claude" : raw;
-  if (!SUPPORTED_AGENTS.has(agent)) {
-    throw new Error(`不支持的本地 Agent：${value}。可选值为 codex 或 claude。`);
+  const agent = ["claude-code", "cc"].includes(raw) ? "claude" : raw;
+  if (!AGENT_ID_PATTERN.test(agent) || agent === "any" || agent === "auto") {
+    throw new Error(`本地 Agent 标识无效：${value}。请使用字母、数字、点、下划线或连字符。`);
   }
   return agent;
 }
@@ -63,7 +79,13 @@ export function normalizeExecutionMode(value, fallback = DEFAULT_EXECUTION_MODE)
 }
 
 export function agentLabel(value) {
-  return AGENT_LABELS[normalizeAgent(value)] || String(value);
+  const normalized = normalizeAgent(value);
+  if (AGENT_LABELS[normalized]) return AGENT_LABELS[normalized];
+  return normalized
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ") + " CLI";
 }
 
 export function platformId() {

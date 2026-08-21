@@ -15,16 +15,17 @@ Modeling Center Bridge
 用法:
   codex-modeling-bridge doctor
   codex-modeling-bridge bootstrap --yes
-  codex-modeling-bridge pair --agent codex|claude --site <站点> --code <配对码> --site-auth <桥接授权>
-  codex-modeling-bridge onboard --agent codex|claude --install --yes --site <站点> --code <配对码> --site-auth <桥接授权> --start
-  codex-modeling-bridge start [--agent codex|claude] [--provider <name>] [--model <name>] [--once] [--concurrency 1]
+  codex-modeling-bridge pair --agent <Agent> --site <站点> --code <配对码> --site-auth <桥接授权>
+  codex-modeling-bridge onboard --agent <Agent> --install --yes --site <站点> --code <配对码> --site-auth <桥接授权> --start
+  codex-modeling-bridge start [--agent <Agent>] [--provider <name>] [--model <name>] [--once] [--concurrency 1]
   codex-modeling-bridge pull                 拉取并执行一条网站任务
   codex-modeling-bridge sessions             查看本机任务绑定的 Agent 会话
   codex-modeling-bridge resume <任务ID> --message "继续验证并修复模型"
   codex-modeling-bridge reconcile <任务ID>   从本地 events.jsonl 补回 token 用量和账单
 
 说明:
-  - 建模 Agent 在本机运行；默认使用 Codex，也可在配对时选择 Claude Code。
+  - 建模 Agent 在本机运行；默认使用 Codex，也可选择已发现的 CLI Agent（包括 Trae Agent CLI、Gemini CLI、Qwen Code 等）。
+  - 兼容的自定义 CLI 可写入本机配置 cliAgents；Bridge 使用无 shell 的参数数组启动，不执行任意 shell 字符串。
   - 不要在网站任务中上传或复制任何 Agent 登录状态。
   - 站点桥接授权和 Runner token 保存在本机 Keychain/Windows DPAPI，不进入 Git。
 `);
@@ -86,11 +87,12 @@ async function commandOnboard(parsed) {
     console.log(`本地建模依赖已安装：${result.cadquery}`);
   }
   const finalReport = needsInstall ? await inspectEnvironment(config) : report;
-  if (!finalReport[agent]?.installed) {
+  const discovered = Array.isArray(finalReport.agents) ? finalReport.agents.find((item) => item.id === agent) : null;
+  if (!(discovered?.installed || finalReport[agent]?.installed)) {
     if (agent === "claude") {
       throw new Error("建模依赖已准备，但未发现 Claude Code。请按 https://code.claude.com/docs/en/getting-started 安装并在本机完成登录后重试 onboard --agent claude。");
     }
-    throw new Error("建模依赖已准备，但未发现 Codex CLI。请按 https://learn.chatgpt.com/docs/codex/cli 安装并在本机完成登录后重试 onboard --agent codex。");
+    throw new Error(`建模依赖已准备，但未发现 ${agentLabel(agent)}。请先在本机安装并完成登录后重试 onboard --agent ${agent}。`);
   }
   if (valueOf(parsed, "site") || valueOf(parsed, "code")) {
     await commandPair(parsed);

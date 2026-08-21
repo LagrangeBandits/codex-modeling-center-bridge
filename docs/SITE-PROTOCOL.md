@@ -20,7 +20,26 @@ The server remains the source of truth for task ownership. This client does not 
 
 ## Optional local agent
 
-`/api/runner/register` uses the wire values `codex` or `claude-code`; the bridge also accepts the local alias `claude`. If the server returns an `agent`, the bridge stores that selection locally and uses it for this runner. A task may also carry an optional `agent`; the runner accepts both `claude-code` and the local `claude` alias only when they match the agent selected at pairing time, so a device cannot silently run a task with a different local login.
+`/api/runner/register` accepts a safe Agent ID made of letters, numbers, dots, underscores, and hyphens. The bridge keeps the compatibility aliases `claude-code` and local `claude`, and can dispatch built-in profiles for Codex, Claude Code, Gemini CLI, Qwen Code, Trae Agent CLI, OpenCode, GitHub Copilot CLI, and Aider. A task may carry any matching Agent ID; the Runner never silently substitutes a different paired Agent or login.
+
+At startup and in `doctor`, the bridge probes every built-in command with its version flag. Additional CLIs can be declared in the local `config.json` under `cliAgents`, for example:
+
+```json
+{
+  "cliAgents": [
+    {
+      "id": "my-agent",
+      "label": "My Agent",
+      "command": "my-agent",
+      "directArgs": ["run", "{prompt}", "--cwd", "{cwd}"],
+      "outputFormat": "jsonl",
+      "modelArgs": ["--model", "{model}"]
+    }
+  ]
+}
+```
+
+Custom profiles use an argument array and `spawn` without a shell. Supported placeholders are `{prompt}`, `{cwd}`, `{taskDir}`, `{workspace}`, `{session}`, `{model}`, and `{provider}`. A profile can declare `planArgs` for a read-only planning mode; without it the bridge refuses to pretend that the CLI is read-only. CLI output is normalized from text, JSON, or JSON Lines. Usage and provider/model fields remain `null`/`unknown` when the CLI does not return reliable structured telemetry.
 
 The site does not receive the Agent's login state, API key, personal chat history, or raw local event stream. It receives only progress, validated artifacts, and the redacted task summary that the bridge places in `artifacts/conversation.md`.
 
@@ -59,7 +78,7 @@ When paired, the Runner may POST the following aggregate device state to `/api/r
 {
   "runnerId": "runner-id",
   "platform": "macos",
-  "agent": "codex",
+  "agent": "trae",
   "provider": "unknown",
   "model": "gpt-5.6-luna",
   "softwareVersion": "0.1.2",
@@ -69,7 +88,7 @@ When paired, the Runner may POST the following aggregate device state to `/api/r
   "memoryUsedBytes": 123456789,
   "memoryTotalBytes": 17179869184,
   "load1m": 1.02,
-  "capabilities": ["task:direct", "task:plan", "task:cancel", "task:priority", "bridge:messages", "agent:codex"]
+  "capabilities": ["task:direct", "task:plan", "task:cancel", "task:priority", "bridge:messages", "agent:trae", "cli:auto-discovery"]
 }
 ```
 

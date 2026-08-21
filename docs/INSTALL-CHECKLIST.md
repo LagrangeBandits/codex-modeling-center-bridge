@@ -5,8 +5,8 @@
 1. 从公开 GitHub 仓库克隆本程序。
 2. macOS 运行 `./scripts/install-macos.sh`，Windows 运行 `Set-ExecutionPolicy -Scope Process Bypass; .\scripts\install-windows.ps1`；脚本会在没有 Node 时准备用户目录 Node 24，并创建 Python 3.11+ / CadQuery 环境。
 3. 选择本机 Agent：
-   - `codex`：设备使用者自己安装 Codex CLI，并完成自己的 ChatGPT/Codex 登录。
-   - `claude`：设备使用者自己安装 Claude Code，并完成自己的本地登录；不复制其他设备的认证目录。
+   - Bridge 会自动探测 Codex、Claude Code、Gemini CLI、Qwen Code、Trae Agent CLI、OpenCode、GitHub Copilot CLI 和 Aider。
+   - 设备使用者自己安装并登录所选 CLI；不复制其他设备的认证目录。需要其他工具时，在本机 `config.json` 的 `cliAgents` 中声明安全参数数组。
 4. 要使用桌面程序，运行 `npm run desktop:dev`；正式安装包由目标平台分别执行 `npm run desktop:dist` 生成。也可以继续使用 CLI 完成引导。
 5. 在云端建模系统生成一次性配对码，并在当前设备的“连接至云端建模系统”临时窗口填入桥接授权；CLI 用户通过 `--site-auth` 或临时环境变量传入。配对完成后可使用“一键前往建模网站”。
 6. 确认 `doctor` 或桌面状态显示 Node 24+、Python 3.11+、CadQuery 和所选 Agent 已就绪。

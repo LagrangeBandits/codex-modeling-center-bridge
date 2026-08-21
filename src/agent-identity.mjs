@@ -210,16 +210,23 @@ async function readClaudeIdentity() {
 
 function environmentIdentity(agent) {
   const selectedAgent = normalizeAgent(agent);
+  const genericPrefix = selectedAgent.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
   const names = selectedAgent === "claude"
     ? {
         provider: ["CLAUDE_PROVIDER", "CLAUDE_CODE_PROVIDER", "MODEL_PROVIDER"],
         model: ["CLAUDE_MODEL", "ANTHROPIC_MODEL"],
         baseUrl: ["ANTHROPIC_BASE_URL", "CLAUDE_BASE_URL"],
       }
-    : {
+    : selectedAgent === "codex"
+      ? {
         provider: ["CODEX_PROVIDER", "CODEX_MODEL_PROVIDER", "MODEL_PROVIDER"],
         model: ["CODEX_MODEL", "OPENAI_MODEL"],
         baseUrl: ["CODEX_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_API_BASE_URL"],
+      }
+      : {
+        provider: [`${genericPrefix}_PROVIDER`, `${genericPrefix}_MODEL_PROVIDER`, "MODEL_PROVIDER"],
+        model: [`${genericPrefix}_MODEL`, "MODEL_NAME"],
+        baseUrl: [`${genericPrefix}_BASE_URL`, "MODEL_BASE_URL"],
       };
   const firstEnv = (keys) => keys.map((key) => process.env[key]).find((value) => typeof value === "string" && value.trim()) || null;
   return {
@@ -231,7 +238,11 @@ function environmentIdentity(agent) {
 
 export async function loadLocalAgentIdentity(agent, config = {}) {
   const selectedAgent = normalizeAgent(agent);
-  const local = selectedAgent === "claude" ? await readClaudeIdentity() : await readCodexIdentity();
+  const local = selectedAgent === "claude"
+    ? await readClaudeIdentity()
+    : selectedAgent === "codex"
+      ? await readCodexIdentity()
+      : {};
   const environment = environmentIdentity(selectedAgent);
   const configured = {
     agent: selectedAgent,

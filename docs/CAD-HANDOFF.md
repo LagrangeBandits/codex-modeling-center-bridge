@@ -7,7 +7,7 @@
 - `taskId`：只允许安全的任务标识，作为本地任务目录名。
 - `priority`：由网站队列决定；Runner 只回传和展示，不在本地重新排序。
 - `executionMode`：`plan` 只输出建模方案，`direct` 才允许运行 CAD 并上传交付文件。
-- `agent`：`codex` 或 `claude-code`，必须与设备配对的本地登录匹配。
+- `agent`：安全 Agent ID，例如 `codex`、`claude-code`、`gemini`、`qwen`、`trae`、`opencode`、`copilot` 或 `aider`；必须与设备配对的本地 CLI 匹配。
 - `modelPreference`：可选的 provider、model、reasoning effort 和兼容端点；不得放入 API key、Cookie 或 OAuth 内容。
 - `messages`：只属于当前任务的用户补充消息；消息有长度上限，必须经过规范化。
 

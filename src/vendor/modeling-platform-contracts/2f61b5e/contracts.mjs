@@ -4,6 +4,7 @@ const MODEL_PREFERENCE_MAX = 240;
 const MAX_MESSAGE_LENGTH = 8_000;
 const MAX_MESSAGES = 32;
 const MAX_CURSOR_LENGTH = 256;
+const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const USAGE_KEYS = Object.freeze([
   "inputTokens",
   "outputTokens",
@@ -65,18 +66,20 @@ export function normalizeSite(value) {
 }
 
 export function normalizeAgent(value, fallback = "codex") {
-  const agent = String(value || fallback).trim().toLowerCase();
-  if (["claude", "claude-code", "cc"].includes(agent)) return "claude";
-  return "codex";
+  const raw = String(value || fallback).trim().toLowerCase();
+  const agent = ["claude-code", "cc"].includes(raw) ? "claude" : raw;
+  return AGENT_ID_PATTERN.test(agent) && !["any", "auto"].includes(agent) ? agent : String(fallback).trim().toLowerCase();
 }
 
 export function wireAgent(value) {
-  return normalizeAgent(value) === "claude" ? "claude-code" : "codex";
+  const agent = normalizeAgent(value);
+  return agent === "claude" ? "claude-code" : agent;
 }
 
 export function normalizeTaskAgent(value) {
   const agent = String(value ?? "any").trim().toLowerCase();
   if (["", "any", "auto", "automatic"].includes(agent)) return "any";
+  if (!AGENT_ID_PATTERN.test(agent)) return "any";
   return wireAgent(agent);
 }
 

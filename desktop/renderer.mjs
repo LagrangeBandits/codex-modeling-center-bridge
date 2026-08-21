@@ -34,7 +34,33 @@ function platformLabel(value) {
 }
 
 function agentLabel(value) {
-  return value === "claude" ? "Claude Code" : "Codex";
+  const labels = {
+    codex: "Codex",
+    claude: "Claude Code",
+    gemini: "Gemini CLI",
+    qwen: "Qwen Code",
+    trae: "Trae Agent CLI",
+    opencode: "OpenCode",
+    copilot: "GitHub Copilot CLI",
+    aider: "Aider",
+  };
+  return labels[value] || `${String(value || "Agent").replace(/[._-]+/g, " ")} CLI`;
+}
+
+function renderAgentOptions(report, selectedAgent = "codex") {
+  const select = $("agent");
+  const agents = Array.isArray(report?.agents) ? report.agents : [];
+  const values = agents.length ? agents : [
+    { id: "codex", label: "Codex", installed: false },
+    { id: "claude", label: "Claude Code", installed: false },
+  ];
+  select.replaceChildren(...values.map((agent) => {
+    const option = document.createElement("option");
+    option.value = agent.id;
+    option.textContent = `${agent.label || agentLabel(agent.id)}${agent.installed ? "" : "（未发现）"}`;
+    return option;
+  }));
+  select.value = values.some((agent) => agent.id === selectedAgent) ? selectedAgent : values[0].id;
 }
 
 function renderEnvironment(report) {
@@ -46,8 +72,7 @@ function renderEnvironment(report) {
     ["Node.js", nodeValue],
     ["Python", statusValue(Boolean(report.modelingPython), report.modelingPython?.version, "未发现")],
     ["CadQuery", statusValue(report.cadquery?.installed, report.cadquery?.version, "未安装")],
-    ["Codex", statusValue(report.codex?.installed, report.codex?.version, "未发现")],
-    ["Claude Code", statusValue(report.claude?.installed, report.claude?.version, "未发现")],
+    ...(Array.isArray(report.agents) ? report.agents.map((agent) => [agent.label || agentLabel(agent.id), statusValue(agent.installed, agent.version, "未发现")] ) : []),
     ["云端连接", latestStatus.config.paired ? `✓ ${latestStatus.config.name || "已连接"}` : "— 未连接"],
     ["工作区", latestStatus.config.workspace || "—"],
   ];
@@ -156,6 +181,7 @@ function renderUpdate(state) {
 function renderStatus(payload) {
   latestStatus = payload;
   const { config, report, runner } = payload;
+  renderAgentOptions(report, config.agent || "codex");
   if (config.agent) $("agent").value = config.agent;
   if (config.site) $("site").value = config.site;
   renderEnvironment(report);

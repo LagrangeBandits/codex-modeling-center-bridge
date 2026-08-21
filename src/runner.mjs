@@ -235,6 +235,12 @@ async function runTaskInternal(config, task, execution) {
           : [];
         if (tools.length) await report(config, task.id, "modeling", 58, `${selectedAgentLabel} 正在使用本地工具：${tools.join(", ")}`, telemetry, taskContext);
       }
+      if (!new Set(["codex", "claude"]).has(selectedAgent)) {
+        const type = String(event.type || "").toLowerCase();
+        if (["tool_use", "tool_call", "tool_result", "command", "cli.output", "message", "assistant"].includes(type)) {
+          await report(config, task.id, "modeling", type.includes("tool") || type === "command" ? 58 : 52, `${selectedAgentLabel} 正在通过本地 CLI 执行建模步骤。`, telemetry, taskContext);
+        }
+      }
     },
   });
 

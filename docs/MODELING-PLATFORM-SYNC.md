@@ -6,7 +6,7 @@ Bridge 将建模网站的 HTTP、鉴权头、任务字段兼容、消息/取消�
 
 - 来源项目：`modeling-platform-contracts`
 - 来源分支：`codex/contracts-sdk-v1`
-- 来源提交：`2f61b5ebfadc32221c1d023793a2522f5f69744b`
+- 来源提交：`00a02e5902e350c0b1dca4bdda928de7b7ca2f91`
 - 快照目录：`src/vendor/modeling-platform-contracts/2f61b5e/`
 
 快照目录同时保留 `SOURCE.md`，用于发布后追溯精确来源。更新时先在本地检出目标共享提交，再执行：

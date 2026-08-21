@@ -49,13 +49,14 @@ export function collectSystemMetrics(previousCpuSnapshot = null) {
 
 export function defaultCapabilities(agent) {
   const selectedAgent = normalizeAgent(agent);
+  const wire = selectedAgent === "claude" ? "claude-code" : selectedAgent;
   return [
     "task:direct",
     "task:plan",
     "task:cancel",
     "task:priority",
     "bridge:messages",
-    selectedAgent === "claude" ? "agent:claude-code" : "agent:codex",
+    `agent:${wire}`,
   ];
 }
 
@@ -78,7 +79,7 @@ export function heartbeatPayload({
   return {
     runnerId: typeof runnerId === "string" && runnerId.trim() ? runnerId.trim().slice(0, 160) : null,
     platform: typeof platform === "string" && platform.trim() ? platform.trim().slice(0, 40) : "unknown",
-    agent: normalizedAgent === "claude" ? "claude-code" : "codex",
+    agent: normalizedAgent === "claude" ? "claude-code" : normalizedAgent,
     provider: typeof provider === "string" && provider.trim() ? provider.trim().slice(0, 80) : "unknown",
     model: typeof model === "string" && model.trim() ? model.trim().slice(0, 160) : null,
     softwareVersion: typeof softwareVersion === "string" && softwareVersion.trim() ? softwareVersion.trim().slice(0, 40) : "unknown",

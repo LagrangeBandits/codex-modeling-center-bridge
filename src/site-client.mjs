@@ -12,7 +12,8 @@ export function normalizeSite(value) {
 }
 
 export function siteAgentValue(agent) {
-  return normalizeAgent(agent) === "claude" ? "claude-code" : "codex";
+  const normalized = normalizeAgent(agent);
+  return normalized === "claude" ? "claude-code" : normalized;
 }
 
 function legacyFetch(fetchImpl, siteBypassToken) {

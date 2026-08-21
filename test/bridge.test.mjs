@@ -16,6 +16,7 @@ import { resolveTaskPreferences } from "../src/runner.mjs";
 import { compareVersions, createUpdateController, normalizeDownloadProgress, normalizeUpdateInfo, UPDATE_STATUS } from "../src/update-manager.mjs";
 import { platformAndArchitecture } from "../scripts/update-manifest-utils.mjs";
 import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
+import { agentProfiles, buildCliArgs, cliProfileForAgent } from "../src/cli-agents.mjs";
 
 test("closes the desktop window into the tray unless the user explicitly quits", () => {
   assert.equal(shouldHideToTray(false), true);
@@ -173,14 +174,48 @@ test("supports selectable local modeling agents", () => {
   assert.equal(normalizeAgent("claude-code"), "claude");
   assert.equal(siteAgentValue("claude"), "claude-code");
   assert.equal(siteAgentValue("codex"), "codex");
+  assert.equal(siteAgentValue("trae"), "trae");
   assert.equal(agentLabel("claude"), "Claude Code");
-  assert.throws(() => normalizeAgent("unknown"), /可选值为 codex 或 claude/);
+  assert.equal(normalizeAgent("trae"), "trae");
+  assert.throws(() => normalizeAgent("bad agent"), /标识无效/);
   assert.equal(resolveTaskAgent("any", "claude"), "claude");
   assert.equal(resolveTaskAgent("auto", "codex"), "codex");
   assert.equal(resolveTaskAgent("codex", "claude"), "codex");
   assert.equal(normalizeExecutionMode(undefined), "direct");
   assert.equal(normalizeExecutionMode("PLAN"), "plan");
   assert.throws(() => normalizeExecutionMode("execute"), /可选值为 direct 或 plan/);
+});
+
+test("discovers extensible CLI profiles without allowing shell strings", () => {
+  const profiles = agentProfiles({
+    cliAgents: [{
+      id: "my-agent",
+      label: "我的 CLI",
+      command: "my-agent",
+      directArgs: ["run", "{prompt}"],
+      planArgs: ["plan", "{prompt}"],
+    }],
+  });
+  assert.ok(profiles.some((profile) => profile.id === "trae"));
+  const custom = cliProfileForAgent("my-agent", { cliAgents: [{ id: "my-agent", command: "my-agent", directArgs: ["run", "{prompt}"] }] });
+  assert.equal(custom?.adapter, "cli");
+  assert.deepEqual(buildCliArgs(custom, {
+    prompt: "生成一个圆柱；$(touch SHOULD_NOT_RUN)",
+    cwd: "/tmp/task",
+    config: {},
+  }), ["run", "生成一个圆柱；$(touch SHOULD_NOT_RUN)"]);
+});
+
+test("keeps read-only plan support explicit per CLI profile", () => {
+  const qwen = cliProfileForAgent("qwen");
+  const trae = cliProfileForAgent("trae");
+  assert.equal(qwen?.supportsPlan, true);
+  assert.equal(trae?.supportsPlan, false);
+  assert.throws(() => buildCliArgs(trae, {
+    prompt: "先讨论方案",
+    cwd: "/tmp/task",
+    executionMode: "plan",
+  }), /没有声明可验证的只读规划模式/);
 });
 
 test("parses Claude stream-json events without executing a CLI", () => {
@@ -245,6 +280,24 @@ test("normalizes real Codex and Claude usage without uploading raw fields", () =
     inputTokens: 4,
     outputTokens: null,
     totalTokens: null,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens: null,
+    reasoningOutputTokens: null,
+  });
+});
+
+test("recognizes structured usage returned by generic CLI agents", () => {
+  const generic = extractAgentUsage("gemini", [{
+    type: "result",
+    stats: { input_tokens: 11, output_tokens: 7 },
+  }]);
+  assert.equal(generic.reason, null);
+  assert.deepEqual(generic.usage, {
+    inputTokens: 11,
+    outputTokens: 7,
+    totalTokens: 18,
     cachedInputTokens: null,
     cacheWriteInputTokens: null,
     cacheCreationInputTokens: null,
