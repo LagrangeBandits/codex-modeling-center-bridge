@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("modelingCenter", {
   downloadUpdate: () => ipcRenderer.invoke("update:download"),
   installUpdate: () => ipcRenderer.invoke("update:install"),
   openUpdateNotes: () => ipcRenderer.invoke("update:notes"),
+  submitFeedback: (input) => ipcRenderer.invoke("feedback:submit", input),
   onRunnerEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("runner:event", listener);

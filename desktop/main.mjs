@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { agentLabel, normalizeAgent } from "../src/constants.mjs";
 import { bootstrapModelingEnvironment, inspectEnvironment } from "../src/modeling-env.mjs";
-import { normalizeSite, pairSite } from "../src/site-client.mjs";
+import { normalizeSite, pairSite, submitFeedback } from "../src/site-client.mjs";
 import { loadConfig } from "../src/state.mjs";
 import { prepareNodeRuntime, resolveBridgeNode, runtimeEnvironment } from "../src/desktop-runtime.mjs";
 import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
@@ -147,6 +147,28 @@ async function status() {
   const report = await inspectEnvironment(config, { nodeRuntime, requireExternalNode: true });
   report.nodeRuntimeError = nodeRuntimeError;
   return { config: publicConfig(config), report, runner: runnerStatus() };
+}
+
+async function sendFeedback(input = {}) {
+  const config = await loadConfig();
+  if (!config.site || !config.runnerId) throw new Error("请先连接至云端建模系统，再提交反馈。");
+  const category = ["connection", "cli", "task", "ui", "billing", "other"].includes(input.category)
+    ? input.category
+    : "other";
+  const message = redact(String(input.message ?? "").trim()).slice(0, 8_000);
+  if (message.length < 2) throw new Error("请先填写遇到的异常或改进建议。");
+  const context = input.context && typeof input.context === "object" ? input.context : {};
+  return submitFeedback(config, {
+    category,
+    message,
+    softwareVersion: app.getVersion(),
+    platform: process.platform,
+    agent: normalizeAgent(config.agent || "codex"),
+    context: {
+      ...context,
+      runnerOutput: runnerState.output.slice(-40).map((line) => redact(line)).join("\n").slice(-6_000),
+    },
+  });
 }
 
 async function prepareEnvironment() {
@@ -353,6 +375,7 @@ ipcMain.handle("update:check", () => updateController?.check() || updateStatus()
 ipcMain.handle("update:download", () => updateController?.download() || updateStatus());
 ipcMain.handle("update:install", () => updateController?.install() || updateStatus());
 ipcMain.handle("update:notes", () => openUpdateNotes());
+ipcMain.handle("feedback:submit", (_event, input) => sendFeedback(input));
 
 app.whenReady().then(() => {
   updateController = createUpdateController({

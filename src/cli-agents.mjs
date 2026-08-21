@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { AGENT_ID_PATTERN, agentLabel, normalizeAgent } from "./constants.mjs";
 import { resolveCommand, runtimeEnvironment } from "./desktop-runtime.mjs";
+import { spawnCommand } from "./process.mjs";
 import { extractAgentUsage, extractUsageFromEvent, formatUsage } from "./usage.mjs";
 
 const MAX_OUTPUT = 12_000;
@@ -10,8 +10,9 @@ const MAX_EVENT_TEXT = 8_000;
 
 /**
  * Built-in profiles cover CLIs that expose a non-interactive/headless mode.
- * The bridge never invokes a shell: every command and argument is passed to
- * spawn() as a separate value. Unknown tools can be added with config.cliAgents.
+ * Commands are passed as separate values. Windows npm shims are the only
+ * exception: Node requires a shell to execute trusted .cmd/.bat entrypoints.
+ * Unknown tools can be added with config.cliAgents.
  */
 export const BUILTIN_CLI_AGENTS = Object.freeze([
   { id: "codex", label: "Codex", command: "codex", adapter: "codex" },
@@ -254,11 +255,10 @@ function environmentForCli(config = {}) {
 
 function runCliProcess({ binary, args, cwd, config, onEvent, signal }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, {
+    const child = spawnCommand(binary, args, {
       cwd,
       env: environmentForCli(config),
       windowsHide: true,
-      shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const events = [];

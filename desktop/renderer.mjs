@@ -18,6 +18,12 @@ function setPairingMessage(message, isError = false) {
   target.className = isError ? "message error" : "message";
 }
 
+function setFeedbackMessage(message, isError = false) {
+  const target = $("feedbackMessageStatus");
+  target.textContent = message || "";
+  target.className = isError ? "message error" : "message";
+}
+
 function addLog(line) {
   const log = $("runnerLog");
   if (log.textContent === "等待操作…") log.textContent = "";
@@ -212,6 +218,48 @@ function closePairing() {
   if (dialog.open) dialog.close();
 }
 
+function openFeedback() {
+  setFeedbackMessage("");
+  const dialog = $("feedbackDialog");
+  if (!dialog.open) dialog.showModal();
+  $("feedbackMessage")?.focus();
+}
+
+function closeFeedback() {
+  const dialog = $("feedbackDialog");
+  if (dialog.open) dialog.close();
+}
+
+async function submitFeedback(event) {
+  event.preventDefault();
+  const button = $("feedbackSubmitButton");
+  const message = $("feedbackMessage").value.trim();
+  if (!message) {
+    setFeedbackMessage("请先填写异常描述。", true);
+    return;
+  }
+  button.disabled = true;
+  setFeedbackMessage("正在提交反馈…");
+  try {
+    const result = await api.submitFeedback({
+      category: $("feedbackCategory").value,
+      message,
+      context: {
+        page: "bridge",
+        selectedAgent: $("agent").value,
+        paired: Boolean(latestStatus?.config?.paired),
+      },
+    });
+    setFeedbackMessage(result?.githubSynced ? "反馈已提交，并已同步到开发反馈库。" : "反馈已保存；开发端将在配置完成后同步。", false);
+    $("feedbackMessage").value = "";
+    window.setTimeout(closeFeedback, 1_200);
+  } catch (error) {
+    setFeedbackMessage(error.message || String(error), true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function openSite() {
   try {
     await api.openSite();
@@ -353,9 +401,13 @@ $("checkUpdateButton").addEventListener("click", checkForUpdates);
 $("downloadUpdateButton").addEventListener("click", downloadUpdate);
 $("installUpdateButton").addEventListener("click", installUpdate);
 $("releaseNotesButton").addEventListener("click", openUpdateNotes);
+$("feedbackButton").addEventListener("click", openFeedback);
 $("closePairingButton").addEventListener("click", closePairing);
 $("cancelPairingButton").addEventListener("click", closePairing);
+$("closeFeedbackButton").addEventListener("click", closeFeedback);
+$("closeFeedbackButtonSecondary").addEventListener("click", closeFeedback);
 $("pairingForm").addEventListener("submit", submitPairing);
+$("feedbackForm").addEventListener("submit", submitFeedback);
 $("startButton").addEventListener("click", startRunner);
 $("stopButton").addEventListener("click", stopRunner);
 $("agent").addEventListener("change", () => {

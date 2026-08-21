@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { runtimeEnvironment } from "./desktop-runtime.mjs";
 import { environmentPythonPath } from "./modeling-env.mjs";
 import { redactForLog } from "./codex-session.mjs";
+import { spawnCommand } from "./process.mjs";
 import { extractAgentUsage, extractUsageFromEvent, formatUsage } from "./usage.mjs";
 
 const DEFAULT_MAX_TURNS = 50;
@@ -201,7 +201,7 @@ function appendLineParser(buffer, chunk, onLine) {
 
 function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent, signal }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(claudeExecutable(), args, {
+    const child = spawnCommand(claudeExecutable(), args, {
       cwd: taskDirectory,
       env: environmentForClaude(config),
       windowsHide: true,

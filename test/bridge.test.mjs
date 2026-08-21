@@ -17,12 +17,26 @@ import { compareVersions, createUpdateController, normalizeDownloadProgress, nor
 import { platformAndArchitecture } from "../scripts/update-manifest-utils.mjs";
 import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
 import { agentProfiles, buildCliArgs, cliProfileForAgent } from "../src/cli-agents.mjs";
+import { needsWindowsShell } from "../src/process.mjs";
 
 test("closes the desktop window into the tray unless the user explicitly quits", () => {
   assert.equal(shouldHideToTray(false), true);
   assert.equal(shouldHideToTray(true), false);
   assert.equal(trayRunnerLabel({ running: true }), "Runner 运行中");
   assert.equal(trayRunnerLabel({ running: false }), "Runner 未启动");
+});
+
+test("recognizes Windows npm command shims without changing Unix commands", () => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+  try {
+    assert.equal(needsWindowsShell("C:\\Users\\Lenovo\\AppData\\Roaming\\npm\\claude.cmd"), true);
+    assert.equal(needsWindowsShell("C:\\Tools\\agent.bat"), true);
+    assert.equal(needsWindowsShell("C:\\Tools\\claude.exe"), false);
+    assert.equal(needsWindowsShell("claude"), false);
+  } finally {
+    Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+  }
 });
 
 test("reports the packaged Bridge release as a user-facing semantic version", () => {

@@ -19,6 +19,7 @@
         </div>
         <div class="topbar-actions">
           <span id="connectionPill" class="status-pill neutral">尚未连接</span>
+          <button id="feedbackButton" class="button ghost compact" type="button">反馈异常</button>
           <button id="topOpenSiteButton" class="button ghost compact" disabled>前往云端系统</button>
         </div>
       </header>
@@ -186,6 +187,35 @@
         </div>
         <p id="pairingMessage" class="message"></p>
         <p class="hint">授权不会进入命令行参数、Git 或网站任务内容。</p>
+      </form>
+    </dialog>
+
+    <dialog id="feedbackDialog" class="modal">
+      <form id="feedbackForm" class="modal-card feedback-card">
+        <div class="modal-heading">
+          <div>
+            <span class="section-kicker">问题反馈</span>
+            <h2>反馈异常</h2>
+          </div>
+          <button id="closeFeedbackButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+        <p class="section-intro">反馈会先保存到云端建模中心。提交时只会附带脱敏的运行摘要，不会上传站点授权、API 密钥或完整聊天记录。</p>
+        <label for="feedbackCategory">问题类型</label>
+        <select id="feedbackCategory">
+          <option value="cli">CLI / Agent 无法发现或启动</option>
+          <option value="connection">网站连接或配对</option>
+          <option value="task">任务执行或交付</option>
+          <option value="ui">界面或交互</option>
+          <option value="billing">用量或计价</option>
+          <option value="other">其它</option>
+        </select>
+        <label for="feedbackMessage">异常描述</label>
+        <textarea id="feedbackMessage" rows="6" maxlength="8000" placeholder="请描述刚刚发生了什么、你期望看到什么结果…"></textarea>
+        <div class="modal-actions">
+          <button id="closeFeedbackButtonSecondary" type="button" class="button ghost">取消</button>
+          <button id="feedbackSubmitButton" type="submit" class="button primary">提交反馈</button>
+        </div>
+        <p id="feedbackMessageStatus" class="message"></p>
       </form>
     </dialog>
 

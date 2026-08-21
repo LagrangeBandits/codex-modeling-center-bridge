@@ -192,6 +192,9 @@ footer { padding: 22px 0 0; color: #74859d; font-size: 11px; text-align: center;
 .modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .icon-button { width: 32px; height: 32px; border: 1px solid #3a5272; border-radius: 9px; background: #192941; color: #c9d8eb; font-size: 22px; line-height: 1; cursor: pointer; }
 .modal-card > .section-intro { margin: 10px 0 2px; }
+.feedback-card { max-width: 620px; }
+.feedback-card textarea { min-height: 130px; resize: vertical; }
+.feedback-card select, .feedback-card textarea { width: 100%; }
 .modal-actions { justify-content: flex-end; margin-top: 23px; }
 .message { min-height: 18px; margin: 12px 0 0; color: #9de0c2; font-size: 12px; }
 @media (max-width: 900px) {
