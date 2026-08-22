@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { appDataDirectory, defaultModelingEnvironment, DEFAULT_CAD_PACKAGE, DEFAULT_NODE_VERSION, DEFAULT_PYTHON_VERSION, DEFAULT_UV_VERSION, isSupportedNodeVersion } from "./constants.mjs";
+import { resolveCommand, runtimeEnvironment } from "./desktop-runtime.mjs";
 import { commandVersion, execFileText, runCommand } from "./process.mjs";
+import { discoverAgents } from "./cli-agents.mjs";
 
 const MIN_PYTHON_MAJOR = 3;
 const MIN_PYTHON_MINOR = 11;
@@ -46,7 +48,7 @@ function venvPython(environmentDirectory) {
 
 async function runnable(spec, args = ["--version"]) {
   try {
-    const result = await execFileText(spec.file, [...spec.args, ...args], { timeout: 20_000 });
+    const result = await execFileText(spec.file, [...spec.args, ...args], { timeout: 20_000, env: runtimeEnvironment() });
     const version = (result.stdout || result.stderr).trim().split(/\r?\n/)[0];
     if (!isSupportedPythonVersion(version)) return null;
     return { ...spec, version };
@@ -57,7 +59,7 @@ async function runnable(spec, args = ["--version"]) {
 
 async function executableVersion(file) {
   try {
-    const result = await execFileText(file, ["--version"], { timeout: 20_000 });
+    const result = await execFileText(file, ["--version"], { timeout: 20_000, env: runtimeEnvironment() });
     return { file, args: [], version: (result.stdout || result.stderr).trim().split(/\r?\n/)[0] || "可用" };
   } catch {
     return null;
@@ -92,7 +94,7 @@ async function inspectPython(python, { allowUnsupported = false } = {}) {
   if (!python) return null;
   let result;
   try {
-    result = await runCommand(python.file, [...python.args, "-c", "import sys; print(sys.executable); print(sys.version.split()[0])"]);
+    result = await runCommand(python.file, [...python.args, "-c", "import sys; print(sys.executable); print(sys.version.split()[0])"], { env: runtimeEnvironment() });
   } catch {
     return null;
   }
@@ -105,7 +107,7 @@ async function inspectPython(python, { allowUnsupported = false } = {}) {
 
 async function checkCadQuery(python) {
   if (!python) return { installed: false, version: null };
-  const result = await runCommand(python, ["-c", "import cadquery; print(getattr(cadquery, '__version__', 'installed'))"]);
+  const result = await runCommand(python, ["-c", "import cadquery; print(getattr(cadquery, '__version__', 'installed'))"], { env: runtimeEnvironment() });
   return {
     installed: result.code === 0,
     version: result.code === 0 ? result.stdout.trim() : null,
@@ -114,13 +116,13 @@ async function checkCadQuery(python) {
 }
 
 async function checkCodex() {
-  const version = await commandVersion(process.platform === "win32" ? "codex.cmd" : "codex");
-  return { installed: Boolean(version), version };
+  const found = await resolveCommand("codex");
+  return { installed: Boolean(found), version: found?.version || null, binary: found?.binary || null };
 }
 
 async function checkClaude() {
-  const version = await commandVersion(process.platform === "win32" ? "claude.cmd" : "claude");
-  return { installed: Boolean(version), version };
+  const found = await resolveCommand("claude");
+  return { installed: Boolean(found), version: found?.version || null, binary: found?.binary || null };
 }
 
 async function findUv() {
@@ -140,23 +142,29 @@ async function checkUv() {
   return { installed: Boolean(found), version: found?.version || null };
 }
 
-export async function inspectEnvironment(config = {}) {
+export async function inspectEnvironment(config = {}, options = {}) {
   const environmentDirectory = config.modelingEnvironment || defaultModelingEnvironment();
   const environmentPythonPath = venvPython(environmentDirectory);
   const environmentPython = await inspectPython({ file: environmentPythonPath, args: [] });
   const systemPython = await inspectPython(await findPython());
   const activePython = environmentPython || systemPython;
+  const nodeRuntime = options.nodeRuntime || null;
+  const node = options.requireExternalNode ? nodeRuntime?.version || null : process.version;
+  const agents = await discoverAgents(config);
+  const agentById = Object.fromEntries(agents.map((agent) => [agent.id, agent]));
   return {
-    node: process.version,
-    nodeSupported: isSupportedNodeVersion(process.version),
+    node,
+    nodeSupported: options.requireExternalNode ? Boolean(nodeRuntime) : isSupportedNodeVersion(process.version),
+    nodeRuntime: nodeRuntime?.binary || null,
     nodeRequirement: `${DEFAULT_NODE_VERSION}+`,
     platform: process.platform,
     environmentDirectory,
     modelingPython: activePython,
     systemPython,
     cadquery: await checkCadQuery(activePython),
-    codex: await checkCodex(),
-    claude: await checkClaude(),
+    codex: agentById.codex || await checkCodex(),
+    claude: agentById.claude || await checkClaude(),
+    agents,
     uv: await checkUv(),
     chatgptApiKeyDetected: Boolean(process.env.OPENAI_API_KEY),
   };
@@ -176,9 +184,9 @@ async function installPythonRuntimeIfPossible() {
   }
 
   if (process.platform === "darwin") {
-    const brew = await commandVersion("brew");
+    const brew = await commandVersion("brew", ["--version"], { env: runtimeEnvironment() });
     if (brew) {
-      const result = await runCommand("brew", ["install", "python@3.11"]);
+      const result = await runCommand("brew", ["install", "python@3.11"], { env: runtimeEnvironment() });
       if (result.code === 0) {
         const discovered = await findPython();
         if (discovered) return discovered;
@@ -201,12 +209,12 @@ async function installPythonRuntimeIfPossible() {
   }
 
   if (process.platform === "win32") {
-    const winget = await commandVersion("winget.exe");
+    const winget = await commandVersion("winget.exe", ["--version"], { env: runtimeEnvironment() });
     if (winget) {
       const result = await runCommand("winget.exe", [
         "install", "--id", "Python.Python.3.11", "--exact", "--scope", "user",
         "--accept-source-agreements", "--accept-package-agreements",
-      ]);
+      ], { env: runtimeEnvironment() });
       if (result.code === 0) return findPython();
       throw new Error(result.stderr.trim() || "WinGet 安装 Python 失败。");
     }
@@ -235,13 +243,14 @@ async function installUvRuntimeIfPossible() {
       "-NoProfile", "-NonInteractive", "-Command",
       "$ErrorActionPreference='Stop'; " +
       `Invoke-WebRequest -UseBasicParsing -MaximumRedirection 5 -Uri ${quotePowerShell(`https://astral.sh/uv/${DEFAULT_UV_VERSION}/install.ps1`)} -OutFile ${quotePowerShell(installerPath)}`,
-    ]);
+    ], { env: runtimeEnvironment() });
     if (download.code !== 0) throw new Error(download.stderr.trim() || "下载 uv 安装程序失败。");
     try {
       const installed = await runCommand(shell, [
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installerPath,
       ], {
         env: {
+          ...runtimeEnvironment(),
           UV_UNMANAGED_INSTALL: runtimeDirectory,
           UV_NO_MODIFY_PATH: "1",
         },
@@ -254,11 +263,12 @@ async function installUvRuntimeIfPossible() {
     const download = await runCommand("curl", [
       "--fail", "--location", "--proto", "=https", "--tlsv1.2", "--silent", "--show-error",
       "--output", installerPath, `https://astral.sh/uv/${DEFAULT_UV_VERSION}/install.sh`,
-    ]);
+    ], { env: runtimeEnvironment() });
     if (download.code !== 0) throw new Error(download.stderr.trim() || "下载 uv 安装程序失败。");
     try {
       const installed = await runCommand("sh", [installerPath], {
         env: {
+          ...runtimeEnvironment(),
           UV_UNMANAGED_INSTALL: runtimeDirectory,
           UV_NO_MODIFY_PATH: "1",
         },
@@ -281,6 +291,7 @@ async function installPythonWithUv(uv) {
   await fs.mkdir(pythonDirectory, { recursive: true });
   await fs.mkdir(pythonBinDirectory, { recursive: true });
   const env = {
+    ...runtimeEnvironment(),
     UV_PYTHON_INSTALL_DIR: pythonDirectory,
     UV_PYTHON_BIN_DIR: pythonBinDirectory,
   };
@@ -310,6 +321,8 @@ async function installCadQuery(python) {
 export async function bootstrapModelingEnvironment(config = {}, options = {}) {
   if (!options.yes) throw new Error("bootstrap 会在本机安装 Python/CadQuery 依赖，请确认后加 --yes 执行。");
   const environmentDirectory = config.modelingEnvironment || defaultModelingEnvironment();
+  const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => {};
+  onProgress("正在检查 Python 和 CadQuery 环境…");
   const runtime = await installPythonRuntimeIfPossible();
   const pythonPath = venvPython(environmentDirectory);
   const existingEnvironment = await inspectPython({ file: pythonPath, args: [] }, { allowUnsupported: true });
@@ -317,11 +330,14 @@ export async function bootstrapModelingEnvironment(config = {}, options = {}) {
     throw new Error(`已有建模虚拟环境使用 Python ${existingEnvironment.version}，需要 Python ${DEFAULT_PYTHON_VERSION}+；为避免覆盖现有环境，请先指定新的 modelingEnvironment 路径。`);
   }
   if (!existingEnvironment) {
+    onProgress("正在创建用户目录 Python 虚拟环境…");
     await createVirtualEnvironment(runtime, environmentDirectory);
   }
+  onProgress("正在安装或修复 CadQuery…");
   await installCadQuery({ file: pythonPath, args: [] });
   const check = await checkCadQuery({ file: pythonPath, args: [] });
   if (!check.installed) throw new Error(check.error || "CadQuery 安装后验证失败。");
+  onProgress(`CadQuery ${check.version || "已安装"} 已就绪`);
   return {
     environmentDirectory,
     python: pythonPath,
@@ -342,6 +358,7 @@ export function formatDoctor(report) {
     `Node: ${report.nodeSupported ? `${yes} ${report.node}` : `${no} ${report.node}（需要 ${report.nodeRequirement || `${DEFAULT_NODE_VERSION}+`}）`}`,
     `Codex CLI: ${report.codex.installed ? `${yes} ${report.codex.version}` : `${no} 未发现`}`,
     `Claude Code: ${report.claude.installed ? `${yes} ${report.claude.version}` : `${no} 未发现（可选）`}`,
+    ...(Array.isArray(report.agents) ? report.agents.filter((agent) => !["codex", "claude"].includes(agent.id)).map((agent) => `${agent.label}: ${agent.installed ? `${yes} ${agent.version || "可用"}` : `${no} 未发现（可选）`}`) : []),
     `Python: ${report.modelingPython ? `${yes} ${report.modelingPython.executable} (${report.modelingPython.version})` : `${no} 未发现 Python ${DEFAULT_PYTHON_VERSION}+`}`,
     `CadQuery: ${report.cadquery.installed ? `${yes} ${report.cadquery.version}` : `${no} 未安装`}`,
     `uv: ${report.uv.installed ? `${yes} ${report.uv.version}` : `${no} 未发现（可选）`}`,

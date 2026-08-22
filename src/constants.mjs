@@ -1,19 +1,51 @@
 import os from "node:os";
+import { createRequire } from "node:module";
 import path from "node:path";
 
+const require = createRequire(import.meta.url);
+let packageVersion = "unknown";
+try {
+  packageVersion = require("../package.json").version || packageVersion;
+} catch {
+  // Source snapshots without package.json still have a safe version value.
+}
+
 export const APP_NAME = "Codex Modeling Center Bridge";
+export const BRIDGE_VERSION = packageVersion === "unknown" || packageVersion.startsWith("v")
+  ? packageVersion
+  : `v${packageVersion}`;
 export const CONFIG_VERSION = 1;
 export const DEFAULT_AGENT = "codex";
-export const SUPPORTED_AGENTS = new Set(["codex", "claude"]);
+export const SUPPORTED_AGENTS = new Set([
+  "codex",
+  "claude",
+  "gemini",
+  "qwen",
+  "trae",
+  "opencode",
+  "copilot",
+  "aider",
+]);
+export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+export const DEFAULT_EXECUTION_MODE = "direct";
+export const SUPPORTED_EXECUTION_MODES = new Set(["direct", "plan"]);
 export const AGENT_LABELS = {
   codex: "Codex",
   claude: "Claude Code",
+  gemini: "Gemini CLI",
+  qwen: "Qwen Code",
+  trae: "Trae Agent CLI",
+  opencode: "OpenCode",
+  copilot: "GitHub Copilot CLI",
+  aider: "Aider",
 };
 export const DEFAULT_NODE_VERSION = "24";
+export const DEFAULT_NODE_RELEASE = "24.19.0";
 export const DEFAULT_UV_VERSION = "0.12.0";
 export const DEFAULT_CAD_PACKAGE = "cadquery>=2.4,<3";
 export const DEFAULT_PYTHON_VERSION = "3.11";
 export const DEFAULT_POLL_INTERVAL_MS = 3_000;
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 export const DEFAULT_WORKSPACE_NAME = "CodexModelingWorkspace";
 
 export function isSupportedNodeVersion(value) {
@@ -22,15 +54,38 @@ export function isSupportedNodeVersion(value) {
 }
 
 export function normalizeAgent(value, fallback = DEFAULT_AGENT) {
-  const agent = String(value || fallback).trim().toLowerCase();
-  if (!SUPPORTED_AGENTS.has(agent)) {
-    throw new Error(`不支持的本地 Agent：${value}。可选值为 codex 或 claude。`);
+  const raw = String(value || fallback).trim().toLowerCase();
+  const agent = ["claude-code", "cc"].includes(raw) ? "claude" : raw;
+  if (!AGENT_ID_PATTERN.test(agent) || agent === "any" || agent === "auto") {
+    throw new Error(`本地 Agent 标识无效：${value}。请使用字母、数字、点、下划线或连字符。`);
   }
   return agent;
 }
 
+export function resolveTaskAgent(value, fallback = DEFAULT_AGENT) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized || normalized === "any" || normalized === "auto" || normalized === "automatic") {
+    return normalizeAgent(fallback);
+  }
+  return normalizeAgent(normalized);
+}
+
+export function normalizeExecutionMode(value, fallback = DEFAULT_EXECUTION_MODE) {
+  const mode = String(value || fallback).trim().toLowerCase();
+  if (!SUPPORTED_EXECUTION_MODES.has(mode)) {
+    throw new Error(`不支持的任务执行模式：${value}。可选值为 direct 或 plan。`);
+  }
+  return mode;
+}
+
 export function agentLabel(value) {
-  return AGENT_LABELS[normalizeAgent(value)] || String(value);
+  const normalized = normalizeAgent(value);
+  if (AGENT_LABELS[normalized]) return AGENT_LABELS[normalized];
+  return normalized
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ") + " CLI";
 }
 
 export function platformId() {

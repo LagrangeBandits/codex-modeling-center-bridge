@@ -8,73 +8,217 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <main class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">PRIVATE MODELING CENTER</p>
-          <h1>云建模中心</h1>
-          <p class="subtitle">把网站任务安全交给这台 Mac 或 Windows 设备本地完成。</p>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">云</span>
+          <div>
+            <strong>云建模中心</strong>
+            <span>本地建模工作台</span>
+          </div>
         </div>
-        <div id="runnerBadge" class="badge idle">Runner 未启动</div>
+        <div class="topbar-actions">
+          <span id="connectionPill" class="status-pill neutral">尚未连接</span>
+          <button id="feedbackButton" class="button ghost compact" type="button">反馈异常</button>
+          <button id="topOpenSiteButton" class="button ghost compact" disabled>前往云端系统</button>
+        </div>
       </header>
 
-      <section class="grid">
-        <article class="card wide">
-          <div class="card-heading">
-            <div>
-              <p class="eyebrow">DEVICE</p>
-              <h2>本机状态</h2>
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="hero-kicker">安全 · 本地 · 可控</p>
+            <h1>云建模中心</h1>
+            <p class="hero-subtitle">把网站任务安全交给连接的设备本地化完成</p>
+            <div class="hero-actions">
+              <button id="heroPairButton" class="button primary">连接至云端建模系统</button>
+              <button id="heroOpenSiteButton" class="button ghost" disabled>一键前往建模网站</button>
             </div>
-            <button id="refreshButton" class="button secondary">刷新</button>
           </div>
-          <div id="environment" class="status-grid"><p class="muted">正在读取本机环境…</p></div>
-          <p id="statusMessage" class="message"></p>
-        </article>
+          <div class="hero-panel" aria-label="运行概览">
+            <span class="hero-panel-label">当前工作方式</span>
+            <strong>云端派发任务</strong>
+            <div class="hero-flow"><span>云端</span><i></i><span>本机 Agent</span><i></i><span>交付</span></div>
+            <p>任务在连接设备本地完成，个人 Agent 会话不上传到网站。</p>
+          </div>
+        </section>
 
-        <article class="card">
-          <p class="eyebrow">AGENT</p>
-          <h2>选择建模 Agent</h2>
-          <label for="agent">本机执行引擎</label>
-          <select id="agent">
-            <option value="codex">Codex</option>
-            <option value="claude">Claude Code</option>
-          </select>
-          <p class="hint">这是本机建模引擎选项，不会同步你的个人聊天记录。</p>
-        </article>
+        <div id="statusMessage" class="toast" role="status" aria-live="polite"></div>
 
-        <article class="card">
-          <p class="eyebrow">PAIRING</p>
-          <h2>连接私有网站</h2>
-          <label for="site">网站地址</label>
-          <input id="site" type="url" placeholder="https://你的私有网站">
-          <label for="code">一次性配对码</label>
-          <input id="code" inputmode="text" autocomplete="off" placeholder="8 位配对码">
-          <label for="siteAuth">站点桥接授权</label>
-          <input id="siteAuth" type="password" autocomplete="off" placeholder="仅在本机暂存并写入安全存储">
-          <label for="deviceName">设备名称（可选）</label>
-          <input id="deviceName" autocomplete="off" placeholder="例如：小瑞的 Mac">
-          <button id="pairButton" class="button primary">配对设备</button>
-          <p class="hint">授权不会进入命令行参数、Git 或网站任务内容。</p>
-        </article>
-
-        <article class="card wide runner-card">
-          <div class="card-heading">
-            <div>
-              <p class="eyebrow">RUNNER</p>
-              <h2>任务执行</h2>
+        <section class="dashboard-grid">
+          <article class="card environment-card">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">01 · 运行基础</span>
+                <h2>本机环境</h2>
+              </div>
+              <button id="refreshButton" class="button ghost compact">刷新</button>
             </div>
+            <p class="section-intro">启动任务前，先确认这台设备具备可用的建模运行环境。</p>
+            <div id="environment" class="status-grid"><p class="muted">正在读取本机环境…</p></div>
+            <div class="environment-footer">
+              <div>
+                <strong>环境准备</strong>
+                <p id="environmentProgress" class="muted">Node.js、Python 和 CadQuery 可按需安装或修复。</p>
+              </div>
+              <button id="repairEnvironmentButton" class="button secondary">一键安装 / 修复工作环境</button>
+            </div>
+          </article>
+
+          <article class="card update-card">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">软件维护</span>
+                <h2>软件更新</h2>
+              </div>
+              <span id="updateState" class="state-label update-state">当前版本</span>
+            </div>
+            <div class="update-content">
+              <div class="update-copy">
+                <p id="updateDescription" class="section-intro">启动后会自动检查公开 Release；下载和安装都需要你的确认。</p>
+                <p class="update-version-line">当前版本 <strong id="appVersion">读取中…</strong></p>
+              </div>
+              <div class="update-actions">
+                <button id="checkUpdateButton" type="button" class="button ghost">检查更新</button>
+                <button id="releaseNotesButton" type="button" class="button ghost" disabled>查看 Release notes</button>
+                <button id="downloadUpdateButton" type="button" class="button secondary" disabled>下载更新</button>
+                <button id="installUpdateButton" type="button" class="button primary" disabled>重启并安装</button>
+              </div>
+            </div>
+            <div id="updateProgressPanel" class="update-progress" hidden>
+              <div class="update-progress-heading"><span>下载进度</span><strong id="updateProgress">0%</strong></div>
+              <div class="progress-track" aria-hidden="true"><div id="updateProgressBar" class="progress-bar"></div></div>
+            </div>
+          </article>
+
+        </section>
+
+        <section class="workflow-grid">
+          <article class="card agent-card">
+            <div class="section-heading compact-heading">
+              <div>
+                <span class="section-kicker">02 · 本地执行</span>
+                <h2>选择建模 Agent</h2>
+              </div>
+            </div>
+            <p class="section-intro">选择任务在这台设备上使用的本地建模引擎。</p>
+            <label for="agent">本机执行引擎</label>
+            <select id="agent">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+              <option value="gemini">Gemini CLI</option>
+              <option value="qwen">Qwen Code</option>
+              <option value="trae">Trae Agent CLI</option>
+              <option value="opencode">OpenCode</option>
+              <option value="copilot">GitHub Copilot CLI</option>
+              <option value="aider">Aider</option>
+            </select>
+            <div id="agentAvailability" class="agent-availability">正在检查 Agent…</div>
+            <p class="hint">仅用于本地建模，不会同步你的个人聊天记录。</p>
+          </article>
+
+        <section class="card cloud-card">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">03 · 云端连接</span>
+              <h2>连接至云端建模系统</h2>
+            </div>
+            <span id="cloudState" class="state-label">尚未连接</span>
+          </div>
+          <div class="cloud-content">
+            <div>
+              <p id="cloudDescription" class="section-intro">连接后，这台设备才能领取网站分配的建模任务。</p>
+              <p id="cloudSiteLabel" class="cloud-site muted">尚未设置云端地址</p>
+            </div>
+            <div class="cloud-actions">
+              <button id="openSiteButton" class="button ghost" disabled>一键前往建模网站</button>
+              <button id="openPairingButton" class="button primary">连接至云端建模系统</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card runner-card">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">04 · 任务执行</span>
+              <h2>本地 Runner</h2>
+            </div>
+            <span id="runnerBadge" class="status-pill neutral">未启动</span>
+          </div>
+          <div class="runner-toolbar">
+            <p id="runnerDescription" class="section-intro">完成连接后，这台设备会按选择的 Agent 领取云端任务。</p>
             <div class="actions">
               <button id="startButton" class="button primary">启动 Runner</button>
               <button id="stopButton" class="button danger" disabled>停止</button>
             </div>
           </div>
-          <p id="runnerDescription" class="muted">完成配对后，这台设备会按选择的 Agent 领取网站任务。</p>
-          <pre id="runnerLog" class="log" aria-live="polite">等待操作…</pre>
-        </article>
-      </section>
+          <details class="log-panel">
+            <summary>查看运行日志</summary>
+            <pre id="runnerLog" class="log" aria-live="polite">等待操作…</pre>
+          </details>
+        </section>
+        </section>
+      </main>
 
-      <footer>任务状态和交付文件来自私有网站；本地 Agent 会话只保留在对应任务目录。</footer>
-    </main>
+      <footer>云端只负责任务队列和交付文件；本地 Agent 会话只保留在对应任务目录。</footer>
+    </div>
+
+    <dialog id="pairingDialog" class="modal">
+      <form id="pairingForm" class="modal-card">
+        <div class="modal-heading">
+          <div>
+            <span class="section-kicker">连接设置</span>
+            <h2>连接至云端建模系统</h2>
+          </div>
+          <button id="closePairingButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+        <p class="section-intro">从网站获取一次性配对码和桥接授权。完成后，这个窗口会自动关闭。</p>
+        <label for="site">云端建模系统地址</label>
+        <input id="site" type="url" placeholder="https://你的云端建模系统">
+        <label for="code">一次性配对码</label>
+        <input id="code" inputmode="text" autocomplete="off" placeholder="8 位配对码">
+        <label for="siteAuth">站点桥接授权</label>
+        <input id="siteAuth" type="password" autocomplete="off" placeholder="仅在本机暂存并写入安全存储">
+        <label for="deviceName">设备名称（选填）</label>
+        <input id="deviceName" autocomplete="off" placeholder="例如：小瑞的 Mac">
+        <div class="modal-actions">
+          <button id="cancelPairingButton" type="button" class="button ghost">取消</button>
+          <button id="pairButton" type="submit" class="button primary">完成连接</button>
+        </div>
+        <p id="pairingMessage" class="message"></p>
+        <p class="hint">授权不会进入命令行参数、Git 或网站任务内容。</p>
+      </form>
+    </dialog>
+
+    <dialog id="feedbackDialog" class="modal">
+      <form id="feedbackForm" class="modal-card feedback-card">
+        <div class="modal-heading">
+          <div>
+            <span class="section-kicker">问题反馈</span>
+            <h2 id="feedbackModalTitle">反馈异常</h2>
+          </div>
+          <button id="closeFeedbackButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+        <p id="feedbackModalIntro" class="section-intro">反馈会先保存到云端建模中心。提交时只会附带脱敏的运行摘要，不会上传站点授权、API 密钥或完整聊天记录。</p>
+        <label for="feedbackCategory">问题类型</label>
+        <select id="feedbackCategory">
+          <option value="cli">CLI / Agent 无法发现或启动</option>
+          <option value="connection">网站连接或配对</option>
+          <option value="task">任务执行或交付</option>
+          <option value="ui">界面或交互</option>
+          <option value="billing">用量或计价</option>
+          <option value="other">其它</option>
+        </select>
+        <label for="feedbackMessage">异常描述</label>
+        <textarea id="feedbackMessage" rows="6" maxlength="8000" placeholder="请描述刚刚发生了什么、你期望看到什么结果…"></textarea>
+        <div class="modal-actions">
+          <button id="closeFeedbackButtonSecondary" type="button" class="button ghost">取消</button>
+          <button id="feedbackSubmitButton" type="submit" class="button primary">提交反馈</button>
+        </div>
+        <p id="feedbackMessageStatus" class="message"></p>
+      </form>
+    </dialog>
+
     <script type="module" src="./renderer.mjs"></script>
   </body>
 </html>

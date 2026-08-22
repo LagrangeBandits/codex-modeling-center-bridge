@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { runtimeEnvironment } from "./desktop-runtime.mjs";
 import { environmentPythonPath } from "./modeling-env.mjs";
 import { redactForLog } from "./codex-session.mjs";
+import { spawnCommand } from "./process.mjs";
+import { extractAgentUsage, extractUsageFromEvent, formatUsage } from "./usage.mjs";
 
 const DEFAULT_MAX_TURNS = 50;
 const CLAUDE_SETTINGS_FILENAME = "claude-settings.json";
@@ -49,7 +51,7 @@ function claudeExecutable() {
 }
 
 function environmentForClaude(config = {}) {
-  const environment = { ...process.env };
+  const environment = runtimeEnvironment();
   const pythonPath = environmentPythonPath(config);
   const pythonDirectory = path.dirname(pythonPath);
   environment.PATH = `${pythonDirectory}${path.delimiter}${environment.PATH || ""}`;
@@ -58,6 +60,12 @@ function environmentForClaude(config = {}) {
   // API credentials could silently change the billing/authentication path.
   delete environment.ANTHROPIC_API_KEY;
   delete environment.ANTHROPIC_AUTH_TOKEN;
+  if (typeof config.baseUrl === "string" && /^https?:\/\//i.test(config.baseUrl.trim())) {
+    environment.ANTHROPIC_BASE_URL = config.baseUrl.trim();
+  }
+  if (typeof config.provider === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(config.provider.trim())) {
+    environment.CLAUDE_CODE_PROVIDER = config.provider.trim();
+  }
   return environment;
 }
 
@@ -112,9 +120,21 @@ function claudePermissionMode(config) {
   return mode;
 }
 
-async function writeClaudeSettings(taskDirectory) {
+async function writeClaudeSettings(taskDirectory, config = {}) {
   const settingsPath = path.join(taskDirectory, CLAUDE_SETTINGS_FILENAME);
-  await fs.writeFile(settingsPath, `${JSON.stringify(cloneSettings(DEFAULT_SETTINGS), null, 2)}\n`, "utf8");
+  const settings = cloneSettings(DEFAULT_SETTINGS);
+  if (config.executionMode === "plan") {
+    settings.permissions.allow = ["Read(./**)", "Glob", "Grep"];
+    settings.permissions.deny = [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(*)",
+      "PowerShell(*)",
+      "WebFetch",
+      "WebSearch",
+    ];
+  }
+  await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   return settingsPath;
 }
 
@@ -128,10 +148,11 @@ function claudeArgs({ taskDirectory, config, previousSession, settingsPath }) {
     "--settings", settingsPath,
     "--setting-sources", "user",
     "--append-system-prompt-file", path.join(taskDirectory, "AGENTS.md"),
-    "--tools", "Read,Glob,Grep,Edit,Write,Bash,PowerShell",
+    "--tools", config.executionMode === "plan" ? "Read,Glob,Grep" : "Read,Glob,Grep,Edit,Write,Bash,PowerShell",
     "--permission-mode", claudePermissionMode(config),
   ];
   if (previousSession?.sessionId) args.push("--resume", previousSession.sessionId);
+  if (config.model) args.push("--model", String(config.model).trim().slice(0, 160));
   return args;
 }
 
@@ -160,8 +181,8 @@ function markdownFromEvents({ prompt, sessionId, events, finalResponse }) {
         : [];
       if (tools.length) lines.push(`- 工具调用：${redactForLog(tools.join(", "))}`);
     } else if (event.type === "result") {
-      const usage = event.usage;
-      if (usage) lines.push(`- 用量记录：输入 ${usage.input_tokens ?? 0}，输出 ${usage.output_tokens ?? 0}`);
+      const usage = extractUsageFromEvent("claude", event);
+      if (usage) lines.push(`- 用量记录：${formatUsage(usage.usage)}`);
       if (event.is_error) lines.push(`- Agent 错误：${redactForLog(event.result || event.subtype || "未知错误")}`);
     }
   }
@@ -178,9 +199,9 @@ function appendLineParser(buffer, chunk, onLine) {
   return remainder;
 }
 
-function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
+function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent, signal }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(claudeExecutable(), args, {
+    const child = spawnCommand(claudeExecutable(), args, {
       cwd: taskDirectory,
       env: environmentForClaude(config),
       windowsHide: true,
@@ -191,6 +212,13 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
     let stderr = "";
     let callbackChain = Promise.resolve();
     let settled = false;
+    let cancellationError = null;
+    const abort = () => {
+      cancellationError = signal?.reason instanceof Error ? signal.reason : new Error("Claude Code 回合已取消。");
+      child.kill();
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
 
     const appendEvent = (line) => {
       if (!String(line).trim()) return;
@@ -203,7 +231,12 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
       }
       if (!event || typeof event !== "object") return;
       events.push(event);
-      if (onEvent) callbackChain = callbackChain.then(() => onEvent(event));
+      if (onEvent) {
+        callbackChain = callbackChain.then(() => onEvent(event)).catch((error) => {
+          if (!settled) child.kill();
+          throw error;
+        });
+      }
     };
 
     child.stdout.on("data", (chunk) => {
@@ -215,10 +248,19 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
-      reject(new Error(`无法启动 Claude Code：${redactForLog(error.message)}`));
+      reject(cancellationError || new Error(`无法启动 Claude Code：${redactForLog(error.message)}`));
     });
-    child.on("close", async (code, signal) => {
+    child.on("close", async (code, childSignal) => {
       if (stdoutRemainder.trim()) appendEvent(stdoutRemainder);
+      signal?.removeEventListener?.("abort", abort);
+      if (cancellationError) {
+        await callbackChain.catch(() => {});
+        if (!settled) {
+          settled = true;
+          reject(cancellationError);
+        }
+        return;
+      }
       try {
         await callbackChain;
       } catch (error) {
@@ -230,7 +272,7 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
       }
       if (settled) return;
       settled = true;
-      resolve({ code: code ?? 1, signal, stderr, events });
+      resolve({ code: code ?? 1, signal: childSignal, stderr, events });
     });
 
     // Ending stdin immediately is required for print mode; waiting for the
@@ -239,30 +281,35 @@ function runClaudeProcess({ taskDirectory, prompt, args, config, onEvent }) {
   });
 }
 
-export async function runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent }) {
+export async function runClaudeTurn({ taskDirectory, prompt, config, previousSession, onEvent, signal }) {
   await fs.mkdir(path.join(taskDirectory, "artifacts"), { recursive: true });
-  const settingsPath = await writeClaudeSettings(taskDirectory);
+  const settingsPath = await writeClaudeSettings(taskDirectory, config);
   const result = await runClaudeProcess({
     taskDirectory,
     prompt,
     args: claudeArgs({ taskDirectory, config, previousSession, settingsPath }),
     config,
     onEvent,
+    signal,
   });
 
   const sessionId = [...result.events].reverse().map(sessionIdFromEvent).find(Boolean) || previousSession?.sessionId || null;
   const resultEvent = [...result.events].reverse().find((event) => event.type === "result");
+  const usageResult = extractAgentUsage("claude", result.events);
+  if (usageResult.reason) console.warn(`Claude Code 用量未知：${usageResult.reason}`);
   const finalResponse = resultEvent?.result || [...result.events].reverse().map(claudeEventText).find(Boolean) || "";
   const failed = result.code !== 0 || result.signal || resultEvent?.is_error || (resultEvent && resultEvent.subtype && resultEvent.subtype !== "success");
   if (failed) {
     const detail = resultEvent?.result || result.stderr.trim() || resultEvent?.subtype || `退出码 ${result.code}`;
-    throw new Error(`Claude Code 执行失败：${redactForLog(detail).slice(0, 4_000)}`);
+    const error = new Error(`Claude Code 执行失败：${redactForLog(detail).slice(0, 4_000)}`);
+    error.usage = usageResult.usage;
+    throw error;
   }
   if (!sessionId) throw new Error("Claude Code 未返回本地会话 ID，无法安全绑定到网站任务。");
 
   const sanitizedEvents = result.events.map((event) => sanitize(event));
   await fs.writeFile(path.join(taskDirectory, "events.jsonl"), `${sanitizedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(taskDirectory, "artifacts", "conversation.md"), markdownFromEvents({ prompt, sessionId, events: result.events, finalResponse }), "utf8");
-  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "claude", sessionId, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
-  return { agent: "claude", sessionId, finalResponse, events: result.events };
+  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "claude", sessionId, attemptId: config.attemptId || null, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  return { agent: "claude", sessionId, finalResponse, events: result.events, usage: usageResult.usage };
 }

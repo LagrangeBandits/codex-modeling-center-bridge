@@ -4,11 +4,22 @@ function mergedEnvironment(options = {}) {
   return { ...process.env, ...(options.env ?? {}) };
 }
 
+export function needsWindowsShell(file) {
+  return process.platform === "win32" && /\.(?:cmd|bat)$/i.test(String(file ?? ""));
+}
+
+export function spawnCommand(file, args = [], options = {}) {
+  return spawn(file, args, {
+    ...options,
+    shell: options.shell ?? needsWindowsShell(file),
+  });
+}
+
 export function runCommand(file, args = [], options = {}) {
   const command = typeof file === "string" ? file : file.file;
   const commandArgs = typeof file === "string" ? args : [...(file.args ?? []), ...args];
   return new Promise((resolve, reject) => {
-    const child = spawn(command, commandArgs, {
+    const child = spawnCommand(command, commandArgs, {
       cwd: options.cwd,
       env: mergedEnvironment(options),
       windowsHide: true,
@@ -32,6 +43,7 @@ export async function execFileText(file, args = [], options = {}) {
       cwd: options.cwd,
       env: mergedEnvironment(options),
       windowsHide: true,
+      shell: options.shell ?? needsWindowsShell(file),
       maxBuffer: options.maxBuffer ?? 2 * 1024 * 1024,
       timeout: options.timeout,
     }, (error, stdout, stderr) => {
@@ -47,9 +59,9 @@ export async function execFileText(file, args = [], options = {}) {
   });
 }
 
-export async function commandVersion(file, args = ["--version"]) {
+export async function commandVersion(file, args = ["--version"], options = {}) {
   try {
-    const result = await execFileText(file, args, { timeout: 15_000 });
+    const result = await execFileText(file, args, { timeout: 15_000, ...options });
     return (result.stdout || result.stderr).trim().split(/\r?\n/)[0] || "可用";
   } catch {
     return null;

@@ -1,49 +1,67 @@
 import path from "node:path";
 import { loadSecret } from "./state.mjs";
 import { normalizeAgent, platformId } from "./constants.mjs";
+import { createModelingClient } from "./vendor/modeling-platform-contracts/b50bc72/sdk.mjs";
+import {
+  normalizeSite as normalizeContractSite,
+  normalizeTaskMessage,
+} from "./vendor/modeling-platform-contracts/b50bc72/contracts.mjs";
+
+const usageSequenceSent = new Map();
+const usageSequenceInFlight = new Map();
 
 export function normalizeSite(value) {
-  if (!value) throw new Error("缺少站点地址");
-  const site = String(value).trim().replace(/\/+$/, "");
-  const url = new URL(site);
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error("站点地址必须是 http 或 https URL");
-  return site;
+  return normalizeContractSite(value);
 }
 
-async function jsonFromResponse(response) {
-  const text = await response.text();
-  let payload = {};
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch {
-    payload = { error: text.slice(0, 500) };
-  }
-  if (!response.ok) {
-    throw new Error(payload.error || `站点请求失败（${response.status}）`);
-  }
-  return payload;
+export function siteAgentValue(agent) {
+  const normalized = normalizeAgent(agent);
+  return normalized === "claude" ? "claude-code" : normalized;
 }
 
-async function authHeaders(config, options = {}) {
-  const headers = { ...(options.headers ?? {}) };
-  const siteBypassToken = options.siteBypassToken || await loadSecret("siteBypassToken");
-  const runnerToken = options.runnerToken || await loadSecret("runnerToken");
-  if (siteBypassToken) headers["OAI-Sites-Authorization"] = `Bearer ${siteBypassToken}`;
-  if (runnerToken) headers.Authorization = `Bearer ${runnerToken}`;
-  return headers;
+function legacyFetch(fetchImpl, siteBypassToken) {
+  return async (url, options = {}) => {
+    const headers = { ...(options.headers || {}) };
+    if (siteBypassToken && !headers["OAI-Sites-Authorization"]) {
+      headers["OAI-Sites-Authorization"] = `Bearer ${siteBypassToken}`;
+    }
+    return fetchImpl(url, { ...options, headers });
+  };
+}
+
+async function modelingClient(config, options = {}) {
+  const siteBypassToken = options.siteBypassToken === undefined
+    ? await loadSecret("siteBypassToken")
+    : options.siteBypassToken;
+  const runnerToken = options.runnerToken === undefined
+    ? await loadSecret("runnerToken")
+    : options.runnerToken;
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") throw new Error("当前运行环境没有可用的 fetch。");
+  return createModelingClient({
+    site: normalizeSite(config.site),
+    runnerToken,
+    siteBypassToken,
+    fetchImpl: legacyFetch(fetchImpl, siteBypassToken),
+    timeoutMs: options.timeoutMs,
+  });
 }
 
 export async function siteRequest(config, endpoint, options = {}) {
-  const bodyIsForm = typeof FormData !== "undefined" && options.body instanceof FormData;
-  const headers = await authHeaders(config, options);
-  if (options.body !== undefined && !bodyIsForm && !headers["Content-Type"]) {
-    headers["Content-Type"] = "application/json";
-  }
-  const response = await fetch(`${normalizeSite(config.site)}${endpoint}`, {
-    ...options,
-    headers,
+  const {
+    fetchImpl,
+    timeoutMs,
+    runnerToken,
+    siteBypassToken,
+    ...requestOptions
+  } = options;
+  const client = await modelingClient(config, {
+    fetchImpl,
+    timeoutMs,
+    runnerToken,
+    siteBypassToken,
   });
-  return jsonFromResponse(response);
+  return client.request(endpoint, requestOptions);
 }
 
 export async function pairSite({ site, code, siteAuth, name, agent = "codex", workspace }) {
@@ -55,20 +73,13 @@ export async function pairSite({ site, code, siteAuth, name, agent = "codex", wo
     throw new Error("--code 必须是网站生成的 8 位配对码");
   }
 
-  const response = await siteRequest(
-    { site: normalized },
-    "/api/runner/register",
-    {
-      method: "POST",
-      siteBypassToken: token,
-      body: JSON.stringify({
-        code: String(code).trim().toUpperCase(),
-        name: name || undefined,
-        platform: platformId(),
-        agent: selectedAgent,
-      }),
-    },
-  );
+  const client = await modelingClient({ site: normalized }, { siteBypassToken: token, runnerToken: null });
+  const response = await client.register({
+    code: String(code).trim().toUpperCase(),
+    name: name || undefined,
+    platform: platformId(),
+    agent: siteAgentValue(selectedAgent),
+  });
 
   const { saveConfig, saveSecret } = await import("./state.mjs");
   await saveConfig({
@@ -86,27 +97,118 @@ export async function pairSite({ site, code, siteAuth, name, agent = "codex", wo
   return response;
 }
 
-export async function pollTask(config) {
-  return siteRequest(config, "/api/runner/poll", { method: "GET" });
+export async function pollTask(config, options = {}) {
+  const {
+    fetchImpl,
+    timeoutMs,
+    runnerToken,
+    siteBypassToken,
+    ...pollOptions
+  } = options;
+  const client = await modelingClient(config, { fetchImpl, timeoutMs, runnerToken, siteBypassToken });
+  return client.poll(pollOptions);
 }
 
-export async function sendEvent(config, taskId, stage, progress, message) {
-  return siteRequest(config, "/api/runner/events", {
+/** Optional terminal-task cleanup queue. A 404/405 means the paired site is older. */
+export async function pollTaskCleanup(config) {
+  const client = await modelingClient(config);
+  return client.getCleanup();
+}
+
+/** Idempotently acknowledge one explicit, safe local task-directory cleanup. */
+export async function acknowledgeTaskCleanup(config, request, result) {
+  const client = await modelingClient(config);
+  return client.acknowledgeCleanup(request, result);
+}
+
+export async function sendEvent(config, taskId, stage, progress, message, telemetry = undefined, context = undefined) {
+  const client = await modelingClient(config);
+  return client.sendEvent(taskId, stage, progress, message, telemetry, context);
+}
+
+export async function completeTask(config, taskId, status, summary = "", error = "", telemetry = undefined, context = undefined) {
+  const client = await modelingClient(config);
+  return client.complete(taskId, status, summary, error, telemetry, context);
+}
+
+export async function sendHeartbeat(config, heartbeat) {
+  const client = await modelingClient(config);
+  return client.heartbeat(heartbeat);
+}
+
+/** Optional interactive bridge. A 404/405 is handled by the Runner as an old site. */
+export async function pollTaskControl(config, taskId, cursor = null) {
+  const client = await modelingClient(config);
+  return client.getMessages(taskId, cursor);
+}
+
+/** Send a redacted assistant summary to a site that stores task-local messages. */
+export async function sendTaskMessage(config, taskId, message, options = {}) {
+  const client = await modelingClient(config);
+  return client.sendMessage(taskId, message, options);
+}
+
+/** Report cancellation when the site has the optional endpoint. Legacy sites fall back to failed. */
+export async function cancelTask(config, taskId, reason = "", telemetry = undefined, context = undefined) {
+  const client = await modelingClient(config);
+  const normalizedReason = normalizeTaskMessage(String(reason || "任务已取消"), "system")?.content || "任务已取消";
+  return client.cancelWithFallback(taskId, normalizedReason, telemetry, context);
+}
+
+export async function reportTaskUsage(config, taskId, telemetry) {
+  const sequence = Number.isSafeInteger(telemetry?.sequence) ? telemetry.sequence : null;
+  const key = `${normalizeSite(config.site)}:${String(taskId)}`;
+  if (sequence !== null && sequence <= (usageSequenceSent.get(key) ?? -1)) {
+    return { skipped: true, duplicate: true, sequence };
+  }
+  const inFlightKey = sequence === null ? null : `${key}:${sequence}`;
+  if (inFlightKey && usageSequenceInFlight.has(inFlightKey)) return usageSequenceInFlight.get(inFlightKey);
+  const client = await modelingClient(config);
+  const request = client.reportUsage(taskId, telemetry)
+    .then((response) => {
+      if (sequence !== null) usageSequenceSent.set(key, Math.max(usageSequenceSent.get(key) ?? -1, sequence));
+      return response;
+    })
+    .finally(() => {
+      if (inFlightKey) usageSequenceInFlight.delete(inFlightKey);
+    });
+  if (inFlightKey) usageSequenceInFlight.set(inFlightKey, request);
+  return request;
+}
+
+/** Optional safe pause/checkpoint endpoint. A 404/405 is handled by the client fallback. */
+export async function checkpointTask(config, taskId, checkpoint) {
+  const client = await modelingClient(config);
+  return client.checkpointWithFallback(taskId, checkpoint);
+}
+
+/** Optional explicit resume endpoint for sites that resume an existing attempt in place. */
+export async function resumeTask(config, taskId, resume) {
+  const client = await modelingClient(config);
+  return client.resume(taskId, resume);
+}
+
+export async function submitFeedback(config, payload) {
+  return siteRequest(config, "/api/feedback", {
     method: "POST",
-    body: JSON.stringify({ taskId, stage, progress, message }),
+    body: JSON.stringify(payload),
   });
 }
 
-export async function completeTask(config, taskId, status, summary = "", error = "") {
-  return siteRequest(config, "/api/runner/complete", {
-    method: "POST",
-    body: JSON.stringify({ taskId, status, summary, error }),
-  });
+function formatBytes(bytes) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-export async function uploadArtifact(config, taskId, filename, content) {
-  const form = new FormData();
-  form.set("taskId", taskId);
-  form.set("artifact", new Blob([content]), path.basename(filename));
-  return siteRequest(config, "/api/runner/artifacts", { method: "POST", body: form });
+export async function uploadArtifact(config, taskId, filename, content, maxBytes = 0) {
+  const size = content?.byteLength ?? content?.length ?? 0;
+  if (size <= 0) throw new Error(`交付文件“${path.basename(filename)}”为空，未上传。`);
+  if (Number.isFinite(maxBytes) && maxBytes > 0 && size > maxBytes) {
+    const error = new Error(`交付文件“${path.basename(filename)}”大小为 ${formatBytes(size)}，超过当前单文件上限 ${formatBytes(maxBytes)}。请减小或拆分 CAD 文件后重试。`);
+    error.status = 413;
+    error.code = "ARTIFACT_TOO_LARGE";
+    throw error;
+  }
+  const client = await modelingClient(config);
+  return client.uploadArtifact(taskId, path.basename(filename), content);
 }

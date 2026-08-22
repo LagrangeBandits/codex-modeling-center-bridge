@@ -5,7 +5,7 @@ import { parseArgs, hasFlag, requiredValue, valueOf } from "./args.mjs";
 import { bootstrapModelingEnvironment, formatDoctor, inspectEnvironment } from "./modeling-env.mjs";
 import { pairSite } from "./site-client.mjs";
 import { configPath, dataDirectory, loadConfig } from "./state.mjs";
-import { listLocalSessions, resumeLocalConversation, startRunner } from "./runner.mjs";
+import { listLocalSessions, reconcileLocalUsage, resumeLocalConversation, startRunner } from "./runner.mjs";
 import { agentLabel, DEFAULT_NODE_VERSION, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, platformLabel } from "./constants.mjs";
 
 function help() {
@@ -15,15 +15,17 @@ Modeling Center Bridge
 用法:
   codex-modeling-bridge doctor
   codex-modeling-bridge bootstrap --yes
-  codex-modeling-bridge pair --agent codex|claude --site <站点> --code <配对码> --site-auth <桥接授权>
-  codex-modeling-bridge onboard --agent codex|claude --install --yes --site <站点> --code <配对码> --site-auth <桥接授权> --start
-  codex-modeling-bridge start [--agent codex|claude] [--once] [--concurrency 1]
+  codex-modeling-bridge pair --agent <Agent> --site <站点> --code <配对码> --site-auth <桥接授权>
+  codex-modeling-bridge onboard --agent <Agent> --install --yes --site <站点> --code <配对码> --site-auth <桥接授权> --start
+  codex-modeling-bridge start [--agent <Agent>] [--provider <name>] [--model <name>] [--once] [--concurrency 1]
   codex-modeling-bridge pull                 拉取并执行一条网站任务
   codex-modeling-bridge sessions             查看本机任务绑定的 Agent 会话
   codex-modeling-bridge resume <任务ID> --message "继续验证并修复模型"
+  codex-modeling-bridge reconcile <任务ID>   从本地 events.jsonl 补回 token 用量和账单
 
 说明:
-  - 建模 Agent 在本机运行；默认使用 Codex，也可在配对时选择 Claude Code。
+  - 建模 Agent 在本机运行；默认使用 Codex，也可选择已发现的 CLI Agent（包括 Trae Agent CLI、Gemini CLI、Qwen Code 等）。
+  - 兼容的自定义 CLI 可写入本机配置 cliAgents；Bridge 使用无 shell 的参数数组启动，不执行任意 shell 字符串。
   - 不要在网站任务中上传或复制任何 Agent 登录状态。
   - 站点桥接授权和 Runner token 保存在本机 Keychain/Windows DPAPI，不进入 Git。
 `);
@@ -85,11 +87,12 @@ async function commandOnboard(parsed) {
     console.log(`本地建模依赖已安装：${result.cadquery}`);
   }
   const finalReport = needsInstall ? await inspectEnvironment(config) : report;
-  if (!finalReport[agent]?.installed) {
+  const discovered = Array.isArray(finalReport.agents) ? finalReport.agents.find((item) => item.id === agent) : null;
+  if (!(discovered?.installed || finalReport[agent]?.installed)) {
     if (agent === "claude") {
       throw new Error("建模依赖已准备，但未发现 Claude Code。请按 https://code.claude.com/docs/en/getting-started 安装并在本机完成登录后重试 onboard --agent claude。");
     }
-    throw new Error("建模依赖已准备，但未发现 Codex CLI。请按 https://learn.chatgpt.com/docs/codex/cli 安装并在本机完成登录后重试 onboard --agent codex。");
+    throw new Error(`建模依赖已准备，但未发现 ${agentLabel(agent)}。请先在本机安装并完成登录后重试 onboard --agent ${agent}。`);
   }
   if (valueOf(parsed, "site") || valueOf(parsed, "code")) {
     await commandPair(parsed);
@@ -104,6 +107,7 @@ async function commandStart(parsed, once = false) {
   const config = await loadConfig();
   const overrides = {};
   if (valueOf(parsed, "model")) overrides.model = valueOf(parsed, "model");
+  if (valueOf(parsed, "provider")) overrides.provider = valueOf(parsed, "provider");
   if (valueOf(parsed, "reasoning-effort")) overrides.reasoningEffort = valueOf(parsed, "reasoning-effort");
   if (valueOf(parsed, "agent")) overrides.agent = normalizeAgent(valueOf(parsed, "agent"));
   await startRunner({
@@ -134,6 +138,15 @@ async function commandResume(parsed) {
   await resumeLocalConversation(path.join(config.workspace, "tasks", taskId), message, config);
 }
 
+async function commandReconcile(parsed) {
+  requireSupportedNode();
+  const taskId = parsed.positionals[0];
+  if (!taskId) throw new Error("用法：reconcile <任务ID>");
+  if (!isSafeTaskId(taskId)) throw new Error("任务 ID 只能包含字母、数字、点、下划线和连字符，且长度不超过 128。");
+  const config = await loadConfig();
+  await reconcileLocalUsage(config, taskId);
+}
+
 async function main() {
   const [command = "help", ...rest] = process.argv.slice(2);
   const parsed = parseArgs(rest);
@@ -146,6 +159,7 @@ async function main() {
   if (command === "pull") return commandStart(parsed, true);
   if (command === "sessions") return commandSessions();
   if (command === "resume") return commandResume(parsed);
+  if (command === "reconcile") return commandReconcile(parsed);
   throw new Error(`未知命令：${command}。运行 help 查看用法。`);
 }
 

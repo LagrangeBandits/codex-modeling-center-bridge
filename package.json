@@ -1,6 +1,6 @@
 {
   "name": "codex-modeling-center-bridge",
-  "version": "0.1.1",
+  "version": "0.1.18",
   "description": "Cross-platform desktop bridge for a private CAD modeling center",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,7 @@
   },
   "main": "desktop/main.mjs",
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/runner.mjs && node --check src/codex-session.mjs && node --check src/claude-session.mjs && node --check src/agent-session.mjs && node --check src/desktop-runtime.mjs && node --check desktop/main.mjs && node --check desktop/renderer.mjs",
+    "check": "node --check src/cli.mjs && node --check src/runner.mjs && node --check src/codex-session.mjs && node --check src/claude-session.mjs && node --check src/cli-agents.mjs && node --check src/agent-session.mjs && node --check src/agent-identity.mjs && node --check src/checkpoint.mjs && node --check src/heartbeat.mjs && node --check src/usage.mjs && node --check src/task-control.mjs && node --check src/task-cleanup.mjs && node --check src/site-client.mjs && node --check src/process.mjs && node --check src/desktop-runtime.mjs && node --check src/desktop-window-policy.mjs && node --check src/update-manager.mjs && node --check scripts/update-manifest-utils.mjs && node --check scripts/create-update-manifest.mjs && node --check scripts/validate-release-version.mjs && node --check scripts/validate-update-manifest.mjs && node --check scripts/verify-packaged-update-config.mjs && node --check desktop/main.mjs && node --check desktop/renderer.mjs",
     "test": "node --test",
     "doctor": "node src/cli.mjs doctor",
     "start": "node src/cli.mjs start",
@@ -21,7 +21,8 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.147.0"
+    "@openai/codex-sdk": "0.147.0",
+    "electron-updater": "6.8.9"
   },
   "devDependencies": {
     "electron": "43.4.0",
@@ -30,28 +31,46 @@
   "build": {
     "appId": "com.lagrangebandits.codex-modeling-center-bridge",
     "productName": "Modeling Center Bridge",
+    "publish": {
+      "provider": "github",
+      "owner": "LagrangeBandits",
+      "repo": "codex-modeling-center-bridge",
+      "releaseType": "release"
+    },
     "asar": true,
     "asarUnpack": [
       "src/**",
       "templates/**",
-      "node_modules/**"
+      "node_modules/**",
+      "package.json"
     ],
     "files": [
       "desktop/**/*",
       "src/**/*",
       "templates/**/*",
       "package.json",
-      "package-lock.json"
+      "package-lock.json",
+      "!desktop/index 2.html",
+      "!desktop/main 2.mjs",
+      "!desktop/preload 2.cjs",
+      "!desktop/renderer 2.mjs",
+      "!desktop/styles 2.css",
+      "!src/agent-session 2.mjs",
+      "!src/claude-session 2.mjs",
+      "!src/desktop-runtime 2.mjs"
     ],
     "mac": {
       "target": [
-        "dmg"
-      ]
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Modeling-Center-Bridge-${version}-${arch}.${ext}"
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "artifactName": "Modeling-Center-Bridge-Setup-${version}.${ext}"
     }
   }
 }
