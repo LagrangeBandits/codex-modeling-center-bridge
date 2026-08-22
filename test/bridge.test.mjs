@@ -8,15 +8,15 @@ import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
 import { agentLabel, BRIDGE_VERSION, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
 import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs";
-import { extractAgentUsage, usagePayload } from "../src/usage.mjs";
+import { createUsageAccumulator, extractAgentUsage, usagePayload } from "../src/usage.mjs";
 import { heartbeatPayload } from "../src/heartbeat.mjs";
 import { identityFromEvents, providerFromBaseUrl, providerFromEvent, providerFromModel } from "../src/agent-identity.mjs";
-import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, taskPromptWithMessages, TaskCancelledError } from "../src/task-control.mjs";
+import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, pauseDirective, taskPromptWithMessages, TaskCancelledError, TaskPausedError } from "../src/task-control.mjs";
 import { resolveTaskPreferences } from "../src/runner.mjs";
 import { compareVersions, createUpdateController, normalizeDownloadProgress, normalizeUpdateInfo, UPDATE_STATUS } from "../src/update-manager.mjs";
 import { platformAndArchitecture } from "../scripts/update-manifest-utils.mjs";
 import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
-import { agentProfiles, buildCliArgs, cliProfileForAgent } from "../src/cli-agents.mjs";
+import { agentProfiles, buildCliArgs, capabilitiesForAgent, cliProfileForAgent, profileCapabilities } from "../src/cli-agents.mjs";
 import { needsWindowsShell } from "../src/process.mjs";
 
 test("closes the desktop window into the tray unless the user explicitly quits", () => {
@@ -136,6 +136,39 @@ test("vendored SDK whitelists telemetry and keeps messages/cancel compatibility"
   assert.equal("transcript" in eventPayload.usage, false);
   assert.equal("apiKey" in JSON.parse(calls.find(({ url }) => url.endsWith("/cancel"))?.options.body || "{}"), false);
   assert.equal(calls.some(({ url }) => url.endsWith("/complete")), true);
+});
+
+test("does not submit the same usage sequence twice", async () => {
+  const calls = [];
+  const client = createModelingClient({
+    site: "https://example.test",
+    runnerToken: "runner-token",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+  const payload = {
+    provider: "deepseek",
+    model: "deepseek-chat",
+    usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    attemptId: "attempt-1",
+    sequence: 7,
+    usageMode: "cumulative",
+    usageSource: "test:event",
+    usageComplete: true,
+    observedAt: "2026-08-22T00:00:00.000Z",
+  };
+  await client.reportUsage("task-1", payload);
+  const duplicate = await client.reportUsage("task-1", payload);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(calls.filter(({ url }) => url.endsWith("/usage")).length, 1);
+  const sent = JSON.parse(calls[0].options.body);
+  assert.equal(sent.attemptId, "attempt-1");
+  assert.equal(sent.sequence, 7);
+  assert.equal(sent.usageMode, "cumulative");
+  assert.equal(sent.usageComplete, true);
+  assert.equal("transcript" in sent, false);
 });
 
 test("only uploads CAD/support files from artifacts", () => {
@@ -366,8 +399,56 @@ test("builds a heartbeat with null-safe metrics and no credentials", () => {
     memoryUsedBytes: null,
     memoryTotalBytes: null,
     load1m: null,
-    capabilities: ["task:direct", "task:plan", "task:cancel", "task:priority", "bridge:messages", "agent:claude-code"],
+    capabilities: ["agent:claude-code", "task:direct", "task:plan", "task:cancel", "telemetry:usage", "telemetry:provider-model", "task:resume", "task:pause", "task:checkpoint", "task:priority", "bridge:messages"],
   });
+});
+
+test("exposes conservative per-agent capabilities for generic CLI adapters", () => {
+  assert.equal(profileCapabilities("trae").direct, "supported");
+  assert.equal(profileCapabilities("trae").plan, "unsupported");
+  assert.equal(profileCapabilities("trae").usage, "unknown");
+  assert.equal(profileCapabilities("trae").resume, "unsupported");
+  const traeCapabilities = capabilitiesForAgent("trae");
+  assert.equal(traeCapabilities.includes("task:pause"), true);
+  assert.equal(traeCapabilities.includes("task:checkpoint"), true);
+  assert.equal(traeCapabilities.includes("task:resume"), false);
+  assert.equal(traeCapabilities.includes("telemetry:usage:unknown"), true);
+});
+
+test("accumulates usage snapshots and deltas with an idempotent sequence", () => {
+  const accumulator = createUsageAccumulator({ attemptId: "attempt-1", usageSource: "trae:event" });
+  const first = accumulator.update("trae", {
+    type: "progress",
+    usage: { input_tokens: 10, output_tokens: 2 },
+  });
+  assert.deepEqual(first, {
+    attemptId: "attempt-1",
+    sequence: 1,
+    usageMode: "cumulative",
+    usageSource: "trae:event",
+    usageComplete: false,
+    observedAt: first.observedAt,
+    usage: {
+      inputTokens: 10,
+      outputTokens: 2,
+      totalTokens: 12,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null,
+      cacheCreationInputTokens: null,
+      cacheReadInputTokens: null,
+      reasoningOutputTokens: null,
+    },
+  });
+  const second = accumulator.update("trae", {
+    type: "progress",
+    usageMode: "delta",
+    usage: { input_tokens: 3, output_tokens: 1 },
+  });
+  assert.equal(second.sequence, 2);
+  assert.equal(second.usageMode, "delta");
+  assert.equal(second.usage.inputTokens, 13);
+  assert.equal(second.usage.outputTokens, 3);
+  assert.equal(second.usage.totalTokens, 16);
 });
 
 test("normalizes optional task control without uploading raw events", () => {
@@ -392,6 +473,18 @@ test("normalizes optional task control without uploading raw events", () => {
   const error = new TaskCancelledError("网站取消");
   assert.equal(error.code, "TASK_CANCELLED");
   assert.equal(error.message, "网站取消");
+  assert.deepEqual(pauseDirective({ pauseRequested: true, quotaState: "insufficient", pauseReason: "余额不足" }), {
+    requested: true,
+    action: "none",
+    quotaState: "insufficient",
+    reason: "余额不足",
+    retryAfter: null,
+    checkpoint: null,
+    attemptId: null,
+  });
+  const paused = new TaskPausedError("等待余额", { checkpointSent: true, quotaState: "insufficient" });
+  assert.equal(paused.code, "TASK_PAUSED");
+  assert.equal(paused.checkpointSent, true);
 });
 
 test("passes modelPreference strings and objects to the local Agent", () => {

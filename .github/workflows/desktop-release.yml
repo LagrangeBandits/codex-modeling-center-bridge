@@ -92,13 +92,17 @@ jobs:
             --assets release-assets \
             --version "${GITHUB_REF_NAME}" \
             --repository "${GITHUB_REPOSITORY}" \
-            --release-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"
+            --release-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --source-commit "${GITHUB_SHA}"
+
+      - name: Validate update manifest
+        run: node scripts/validate-update-manifest.mjs release-assets/update-manifest.json
 
       - name: Create checksums
         shell: bash
         run: |
           cd release-assets
-          find . -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          find . -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name 'latest*.yml' -o -name 'update-manifest.json' \) -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
 
       - name: Create or update draft GitHub Release
         env:

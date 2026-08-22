@@ -102,10 +102,10 @@ async function usableNode(binary) {
   }
 }
 
-export async function resolveCommand(command) {
+export async function resolveCommand(command, args = ["--version"], options = {}) {
   for (const candidate of commandCandidates(command)) {
     try {
-      const result = await execFileText(candidate, ["--version"], { timeout: 15_000, env: runtimeEnvironment() });
+      const result = await execFileText(candidate, args, { timeout: options.timeout ?? 15_000, env: runtimeEnvironment() });
       const version = (result.stdout || result.stderr).trim().split(/\r?\n/)[0] || "可用";
       return { binary: candidate, version };
     } catch {

@@ -136,3 +136,26 @@ The polled task may include `executionMode`. Missing or `direct` means the norma
 ## Model preference passthrough
 
 The site may return `modelPreference` as the normalized string `auto` or a model name such as `deepseek-chat`/`qwen-plus`; it may also return the compatible object `{ "provider": "deepseek", "model": "deepseek-chat", "reasoningEffort": "high" }`. `auto` leaves the local configuration unchanged. The Runner also accepts the equivalent task-level fields and `baseUrl`/`apiBaseUrl` when explicitly configured. Codex receives the model, reasoning effort, optional base URL, and a safe `model_provider` config override; Claude Code receives the model and safe endpoint/provider environment hints. The bridge still reports the identity observed in the real local response first. It never turns `codex` into `openai` or `claude` into `anthropic` without evidence.
+
+## Usage sequences and real-time reporting
+
+`/api/runner/usage` and the existing event/complete payloads may carry these optional fields in addition to `provider`, `model`, and `usage`:
+
+- `attemptId`: task-attempt identifier, never a secret or transcript;
+- `sequence`: monotonic task-local sequence starting at 1; the site should deduplicate by `taskId + attemptId + sequence`;
+- `usageMode`: `cumulative` or `delta`;
+- `usageSource`: for example `codex:event`, `claude:event`, or `bridge:reconcile`;
+- `usageComplete`: whether the local Agent supplied complete terminal usage;
+- `observedAt`: local observation timestamp.
+
+Bridge sends only allowlisted aggregate token numbers. When the real CLI/OAuth response cannot be read reliably, usage fields remain `null` and the reason stays in the local log. API keys, authentication state, raw events, and transcripts never cross the site boundary. Repeated sequences must be idempotent and must not be counted twice.
+
+## Quota pause and checkpoints
+
+The poll/control response may carry `action: "pause"`, `quotaState` (`ok`, `insufficient`, `rate_limited`, `auth_required`, or `unknown`), `pauseRequested`, `pauseReason`, `retryAfter`, `attemptId`, and an optional `checkpoint`. Bridge pauses only before an Agent turn, at a complete turn/tool boundary, or before artifact upload.
+
+Bridge reports checkpoints through `POST /api/runner/checkpoint`. If the endpoint returns 404/405 it tries `POST /api/runner/pause`; if both are unavailable it uses the legacy complete fallback and never claims a resumable checkpoint. A checkpoint contains `checkpointId`, `checkpointVersion`, `stage`, `resumeSupported`, `resumeFrom`, and `reasonCode`. Codex/Claude are marked resumable only when a real local session reference exists; a generic CLI must explicitly declare resume support. The optional `POST /api/runner/resume` endpoint can resume an existing attempt, or the site can confirm and requeue the task.
+
+## Capability heartbeat
+
+Heartbeat `capabilities` declares `task:pause`, `task:checkpoint`, `task:resume` when supported, and `telemetry:usage` or `telemetry:usage:unknown`, together with each Agent's direct/plan/provider-model capabilities. Unknown capability is never reported as full support.

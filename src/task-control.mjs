@@ -43,6 +43,42 @@ export class TaskCancelledError extends Error {
   }
 }
 
+export class TaskPausedError extends Error {
+  constructor(reason = "任务已安全暂停，等待网站恢复。", options = {}) {
+    super(cleanText(reason, 1_000) || "任务已安全暂停，等待网站恢复。");
+    this.name = "TaskPausedError";
+    this.code = "TASK_PAUSED";
+    this.checkpoint = options.checkpoint || null;
+    this.checkpointSent = options.checkpointSent === true;
+    this.retryAfter = options.retryAfter ?? null;
+    this.quotaState = options.quotaState || "unknown";
+  }
+}
+
+export function pauseDirective(value) {
+  const source = normalizeControlPayload(value);
+  const quotaState = source.quotaState || "unknown";
+  const requested = source.pauseRequested === true
+    || source.action === "pause"
+    || ["insufficient", "rate_limited", "auth_required"].includes(quotaState);
+  return {
+    requested,
+    action: source.action || "none",
+    quotaState,
+    reason: source.pauseReason || (quotaState === "insufficient" ? "网站余额不足。" : null),
+    retryAfter: source.retryAfter ?? null,
+    checkpoint: source.checkpoint || null,
+    attemptId: source.attemptId || null,
+  };
+}
+
+export function isQuotaError(error) {
+  const text = String(error?.message || error || "").toLowerCase();
+  const status = Number(error?.status);
+  return [402, 429].includes(status)
+    || /(insufficient[_ -]?balance|insufficient[_ -]?quota|quota|rate[ -]?limit|credit|余额不足|额度不足|用量上限|限流)/i.test(text);
+}
+
 export {
   MAX_MESSAGE_LENGTH,
   MAX_MESSAGES,

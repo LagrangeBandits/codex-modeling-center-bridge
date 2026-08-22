@@ -1,5 +1,6 @@
 import os from "node:os";
 import { normalizeAgent, platformId } from "./constants.mjs";
+import { capabilitiesForAgent } from "./cli-agents.mjs";
 
 function positiveInteger(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -47,17 +48,9 @@ export function collectSystemMetrics(previousCpuSnapshot = null) {
   };
 }
 
-export function defaultCapabilities(agent) {
+export function defaultCapabilities(agent, config = {}) {
   const selectedAgent = normalizeAgent(agent);
-  const wire = selectedAgent === "claude" ? "claude-code" : selectedAgent;
-  return [
-    "task:direct",
-    "task:plan",
-    "task:cancel",
-    "task:priority",
-    "bridge:messages",
-    `agent:${wire}`,
-  ];
+  return capabilitiesForAgent(selectedAgent, config);
 }
 
 export function heartbeatPayload({

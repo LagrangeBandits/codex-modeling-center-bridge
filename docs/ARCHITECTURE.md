@@ -59,3 +59,9 @@ The Electron renderer has no Node integration. Context isolation and a narrow pr
 - A cancellation is checked before Agent startup, during streamed events, before uploads, and before settlement. If the optional control endpoint is missing, normal legacy execution continues.
 - Web supplements are task-local context only; they never open or synchronize a user's personal Codex/Claude conversation.
 - Raw credentials are excluded from task prompts, transcripts, artifacts, and Git.
+
+## Extensible Agents and checkpoints
+
+The CLI registry separates discovery, argument construction, event parsing, identity/usage parsing, and capability reporting. Built-in profiles cover Codex, Claude, Gemini, Qwen, Trae, OpenCode, Copilot, and Aider. A discovered command is not treated as proof that direct, plan, streaming, usage, provider/model, cancellation, or resume are all supported; unknown capabilities remain `unknown`.
+
+Usage is sent with a task-local `attemptId` and monotonic `sequence`, allowing cumulative snapshots and deltas to be deduplicated. Quota pauses happen only at safe boundaries. A local checkpoint contains only a session reference, stage, reason, aggregate usage, and safe artifact metadata; the site coordinates pause and resume.

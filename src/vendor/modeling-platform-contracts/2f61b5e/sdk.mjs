@@ -1,10 +1,12 @@
 import {
   normalizeControlPayload,
+  normalizeCheckpoint,
   normalizeModelPreference,
   normalizeSite,
   normalizeTaskMessage,
   normalizeTaskPriority,
   normalizeTelemetry,
+  normalizeQuotaState,
   usagePayload,
 } from "./contracts.mjs";
 
@@ -56,6 +58,9 @@ export function createModelingClient({
 } = {}) {
   const baseUrl = normalizeSite(site);
   if (typeof fetchImpl !== "function") throw new Error("当前运行环境没有可用的 fetch。");
+
+  const usageSequenceSent = new Map();
+  const usageSequenceInFlight = new Map();
 
   async function request(endpoint, options = {}) {
     const path = joinEndpoint(endpoint);
@@ -140,9 +145,94 @@ export function createModelingClient({
         }
       }
     },
-    reportUsage(taskId, value) {
+    checkpoint(taskId, value = {}) {
+      const source = value && typeof value === "object" ? value : {};
+      const checkpoint = normalizeCheckpoint(source.checkpoint ?? source);
+      const payload = {
+        taskId,
+        attemptId: source.attemptId || source.attempt_id || checkpoint?.attemptId || undefined,
+        checkpoint,
+        checkpointId: checkpoint?.checkpointId || undefined,
+        status: "paused",
+        quotaState: normalizeQuotaState(source.quotaState ?? source.quota_state),
+        pauseReason: redactedText(source.pauseReason ?? source.pause_reason ?? source.reasonCode ?? source.reason, 240),
+        retryAfter: source.retryAfter ?? source.retry_after ?? undefined,
+        resumeSupported: source.resumeSupported ?? checkpoint?.resumeSupported ?? null,
+        resumeFrom: source.resumeFrom ?? source.resume_from ?? checkpoint?.resumeFrom ?? undefined,
+        provider: redactedText(source.provider, 80) || "unknown",
+        model: redactedText(source.model, 160) || null,
+        usage: usagePayload(source.usage),
+      };
+      return request("/api/runner/checkpoint", { method: "POST", body: JSON.stringify(payload) });
+    },
+    async checkpointWithFallback(taskId, value = {}) {
+      try {
+        return await this.checkpoint(taskId, value);
+      } catch (error) {
+        if (error?.status !== 404 && error?.status !== 405) throw error;
+        const source = value && typeof value === "object" ? value : {};
+        const checkpoint = normalizeCheckpoint(source.checkpoint ?? source);
+        const payload = {
+          taskId,
+          attemptId: source.attemptId || source.attempt_id || checkpoint?.attemptId || undefined,
+          checkpoint,
+          checkpointId: checkpoint?.checkpointId || undefined,
+          status: "paused",
+          quotaState: normalizeQuotaState(source.quotaState ?? source.quota_state),
+          pauseReason: redactedText(source.pauseReason ?? source.pause_reason ?? source.reasonCode ?? source.reason, 240),
+          retryAfter: source.retryAfter ?? source.retry_after ?? undefined,
+          resumeSupported: source.resumeSupported ?? checkpoint?.resumeSupported ?? null,
+          resumeFrom: source.resumeFrom ?? source.resume_from ?? checkpoint?.resumeFrom ?? undefined,
+          provider: redactedText(source.provider, 80) || "unknown",
+          model: redactedText(source.model, 160) || null,
+          usage: usagePayload(source.usage),
+        };
+        try {
+          return await request("/api/runner/pause", { method: "POST", body: JSON.stringify(payload) });
+        } catch (pauseError) {
+          if (pauseError?.status === 404 || pauseError?.status === 405) {
+            const fallback = await this.complete(taskId, "paused", "", payload.pauseReason || "任务已安全暂停。", source, {
+              priority: source.priority,
+              executionMode: source.executionMode,
+            });
+            return { ...fallback, legacyFallback: true };
+          }
+          throw pauseError;
+        }
+      }
+    },
+    resume(taskId, value = {}) {
+      const source = value && typeof value === "object" ? value : {};
+      return request("/api/runner/resume", {
+        method: "POST",
+        body: JSON.stringify({
+          taskId,
+          attemptId: source.attemptId || source.attempt_id || undefined,
+          checkpointId: source.checkpointId || source.checkpoint_id || undefined,
+          resumeFrom: source.resumeFrom || source.resume_from || undefined,
+        }),
+      });
+    },
+    async reportUsage(taskId, value) {
       const safe = telemetry(value);
-      return request("/api/runner/usage", { method: "POST", body: JSON.stringify({ taskId, ...safe }) });
+      const sequence = Number.isSafeInteger(safe.sequence) ? safe.sequence : null;
+      const key = String(taskId);
+      const last = usageSequenceSent.get(key);
+      if (sequence !== null && last !== undefined && sequence <= last) {
+        return { skipped: true, duplicate: true, sequence };
+      }
+      const inFlightKey = sequence === null ? null : `${key}:${sequence}`;
+      if (inFlightKey && usageSequenceInFlight.has(inFlightKey)) return usageSequenceInFlight.get(inFlightKey);
+      const requestPromise = request("/api/runner/usage", { method: "POST", body: JSON.stringify({ taskId, ...safe }) })
+        .then((response) => {
+          if (sequence !== null) usageSequenceSent.set(key, Math.max(usageSequenceSent.get(key) ?? -1, sequence));
+          return response;
+        })
+        .finally(() => {
+          if (inFlightKey) usageSequenceInFlight.delete(inFlightKey);
+        });
+      if (inFlightKey) usageSequenceInFlight.set(inFlightKey, requestPromise);
+      return requestPromise;
     },
     uploadArtifact(taskId, filename, content) {
       const size = content?.byteLength ?? content?.length ?? 0;

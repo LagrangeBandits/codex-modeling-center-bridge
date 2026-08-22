@@ -154,7 +154,7 @@ export async function runCodexTurn({ taskDirectory, prompt, config, previousThre
   const sanitizedEvents = events.map((event) => sanitize(event));
   await fs.writeFile(path.join(taskDirectory, "events.jsonl"), `${sanitizedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(taskDirectory, "artifacts", "conversation.md"), markdownFromEvents({ prompt, threadId, events, finalResponse }), "utf8");
-  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "codex", threadId, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "codex", threadId, attemptId: config.attemptId || null, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
   return { threadId, finalResponse, events, usage: usageResult.usage };
 }
 

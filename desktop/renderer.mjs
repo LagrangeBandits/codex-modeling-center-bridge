@@ -55,6 +55,19 @@ function agentLabel(value) {
   return labels[value] || `${String(value || "Agent").replace(/[._-]+/g, " ")} CLI`;
 }
 
+function capabilitySummary(agent) {
+  const capabilities = agent?.capabilities && typeof agent.capabilities === "object" ? agent.capabilities : {};
+  const labels = [];
+  if (capabilities.direct === "supported") labels.push("可执行");
+  if (capabilities.plan === "supported") labels.push("可规划");
+  if (capabilities.plan === "unknown") labels.push("规划未知");
+  if (capabilities.usage === "supported") labels.push("用量可读");
+  if (capabilities.usage === "unknown") labels.push("用量未知");
+  if (capabilities.resume === "supported") labels.push("可恢复");
+  if (capabilities.resume === "unsupported") labels.push("不可恢复");
+  return labels.length ? ` · ${labels.join("、")}` : "";
+}
+
 function renderAgentOptions(report, selectedAgent = "codex") {
   const select = $("agent");
   const agents = Array.isArray(report?.agents) ? report.agents : [];
@@ -80,7 +93,7 @@ function renderEnvironment(report) {
     ["Node.js", nodeValue],
     ["Python", statusValue(Boolean(report.modelingPython), report.modelingPython?.version, "未发现")],
     ["CadQuery", statusValue(report.cadquery?.installed, report.cadquery?.version, "未安装")],
-    ...(Array.isArray(report.agents) ? report.agents.map((agent) => [agent.label || agentLabel(agent.id), statusValue(agent.installed, agent.version, "未发现")] ) : []),
+    ...(Array.isArray(report.agents) ? report.agents.map((agent) => [agent.label || agentLabel(agent.id), `${statusValue(agent.installed, agent.version, "未发现")}${agent.installed ? capabilitySummary(agent) : ""}`] ) : []),
     ["云端连接", latestStatus.config.paired ? `✓ ${latestStatus.config.name || "已连接"}` : "— 未连接"],
     ["工作区", latestStatus.config.workspace || "—"],
   ];
@@ -102,7 +115,7 @@ function renderAgentAvailability(report) {
   const target = $("agentAvailability");
   target.className = `agent-availability ${result?.installed ? "ready" : "missing"}`;
   target.textContent = result?.installed
-    ? `✓ 已发现 ${agentLabel(selected)}：${result.version || "可用"}`
+    ? `✓ 已发现 ${agentLabel(selected)}：${result.version || "可用"}${capabilitySummary(result)}`
     : `— 未发现 ${agentLabel(selected)}，请先在本机安装并完成登录。`;
 }
 
@@ -164,6 +177,9 @@ function renderUpdate(state) {
     : `v${update?.version || "未知"} 已下载完成，可以确认重启并安装。`;
   if (status === "installing") description = "正在准备重启并安装更新…";
   if (status === "error") description = `更新失败：${state.error || "请稍后重试。"}`;
+  if (update?.features?.length && ["available", "downloaded"].includes(status)) {
+    description += ` 支持：${update.features.join("、")}`;
+  }
   $("updateDescription").textContent = description;
 
   const busy = ["checking", "downloading", "installing"].includes(status);

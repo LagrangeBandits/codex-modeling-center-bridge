@@ -7,6 +7,16 @@ import { extractAgentUsage, extractUsageFromEvent, formatUsage } from "./usage.m
 
 const MAX_OUTPUT = 12_000;
 const MAX_EVENT_TEXT = 8_000;
+const CAPABILITY_STATES = new Set(["supported", "unsupported", "unknown"]);
+const DEFAULT_CAPABILITIES = Object.freeze({
+  direct: "supported",
+  plan: "unknown",
+  streaming: "unknown",
+  usage: "unknown",
+  providerModel: "unknown",
+  cancel: "supported",
+  resume: "unsupported",
+});
 
 /**
  * Built-in profiles cover CLIs that expose a non-interactive/headless mode.
@@ -15,8 +25,20 @@ const MAX_EVENT_TEXT = 8_000;
  * Unknown tools can be added with config.cliAgents.
  */
 export const BUILTIN_CLI_AGENTS = Object.freeze([
-  { id: "codex", label: "Codex", command: "codex", adapter: "codex" },
-  { id: "claude", label: "Claude Code", command: "claude", adapter: "claude" },
+  {
+    id: "codex",
+    label: "Codex",
+    command: "codex",
+    adapter: "codex",
+    capabilities: { direct: "supported", plan: "supported", streaming: "supported", usage: "supported", providerModel: "supported", cancel: "supported", resume: "supported" },
+  },
+  {
+    id: "claude",
+    label: "Claude Code",
+    command: "claude",
+    adapter: "claude",
+    capabilities: { direct: "supported", plan: "supported", streaming: "supported", usage: "supported", providerModel: "supported", cancel: "supported", resume: "supported" },
+  },
   {
     id: "gemini",
     label: "Gemini CLI",
@@ -26,6 +48,7 @@ export const BUILTIN_CLI_AGENTS = Object.freeze([
     supportsPlan: false,
     modelArgs: ["--model", "{model}"],
     provider: "google",
+    capabilities: { direct: "supported", plan: "unsupported", streaming: "supported", usage: "unknown", providerModel: "unknown", cancel: "supported", resume: "unsupported" },
   },
   {
     id: "qwen",
@@ -36,6 +59,7 @@ export const BUILTIN_CLI_AGENTS = Object.freeze([
     outputFormat: "jsonl",
     modelArgs: ["--model", "{model}"],
     provider: "qwen",
+    capabilities: { direct: "supported", plan: "supported", streaming: "supported", usage: "unknown", providerModel: "unknown", cancel: "supported", resume: "unknown" },
   },
   {
     id: "trae",
@@ -45,6 +69,7 @@ export const BUILTIN_CLI_AGENTS = Object.freeze([
     outputFormat: "text",
     modelArgs: ["--model", "{model}"],
     providerArgs: ["--provider", "{provider}"],
+    capabilities: { direct: "supported", plan: "unsupported", streaming: "unknown", usage: "unknown", providerModel: "unknown", cancel: "supported", resume: "unsupported" },
   },
   {
     id: "opencode",
@@ -53,6 +78,7 @@ export const BUILTIN_CLI_AGENTS = Object.freeze([
     directArgs: ["run", "{prompt}", "--format", "json"],
     outputFormat: "json",
     modelArgs: ["--model", "{model}"],
+    capabilities: { direct: "supported", plan: "unsupported", streaming: "unknown", usage: "unknown", providerModel: "unknown", cancel: "supported", resume: "unknown" },
   },
   {
     id: "copilot",
@@ -62,6 +88,7 @@ export const BUILTIN_CLI_AGENTS = Object.freeze([
     planArgs: ["-p", "{prompt}", "--output-format", "json", "--plan"],
     outputFormat: "json",
     requiresAutoApproval: true,
+    capabilities: { direct: "supported", plan: "supported", streaming: "unknown", usage: "unknown", providerModel: "unknown", cancel: "supported", resume: "unsupported" },
   },
   {
     id: "aider",
@@ -69,6 +96,7 @@ export const BUILTIN_CLI_AGENTS = Object.freeze([
     command: "aider",
     directArgs: ["--message", "{prompt}", "--yes-always", "--no-auto-commits"],
     outputFormat: "text",
+    capabilities: { direct: "supported", plan: "unsupported", streaming: "unknown", usage: "unknown", providerModel: "unknown", cancel: "supported", resume: "unsupported" },
   },
 ]);
 
@@ -81,6 +109,18 @@ function cleanArray(value, fallback = []) {
   return Array.isArray(value) && value.every((item) => typeof item === "string")
     ? value.map((item) => item.slice(0, 2_000))
     : fallback;
+}
+
+function capabilityState(value, fallback = "unknown") {
+  if (value === true) return "supported";
+  if (value === false) return "unsupported";
+  const state = String(value ?? "").trim().toLowerCase();
+  return CAPABILITY_STATES.has(state) ? state : fallback;
+}
+
+function normalizeCapabilities(source) {
+  const value = source && typeof source === "object" && !Array.isArray(source) ? source : {};
+  return Object.fromEntries(Object.entries(DEFAULT_CAPABILITIES).map(([key, fallback]) => [key, capabilityState(value[key], fallback)]));
 }
 
 function redact(value) {
@@ -116,12 +156,17 @@ function normalizeProfile(source, sourceType = "custom") {
     versionArgs: cleanArray(source.versionArgs, ["--version"]).slice(0, 16),
     directArgs: cleanArray(source.directArgs, source.args ? cleanArray(source.args) : ["{prompt}"]).slice(0, 64),
     planArgs: Array.isArray(source.planArgs) ? cleanArray(source.planArgs).slice(0, 64) : null,
+    resumeArgs: Array.isArray(source.resumeArgs) ? cleanArray(source.resumeArgs).slice(0, 32) : null,
     outputFormat: ["text", "json", "jsonl"].includes(source.outputFormat) ? source.outputFormat : "text",
     modelArgs: cleanArray(source.modelArgs),
     providerArgs: cleanArray(source.providerArgs),
+    provider: cleanString(source.provider, 80),
     supportsPlan: Array.isArray(source.planArgs) && source.planArgs.length > 0,
     requiresAutoApproval: Boolean(source.requiresAutoApproval),
+    capabilities: normalizeCapabilities(source.capabilities),
   };
+  if (profile.adapter === "codex" || profile.adapter === "claude") profile.capabilities = normalizeCapabilities({ ...profile.capabilities, direct: "supported", plan: "supported", streaming: "supported", usage: "supported", providerModel: "supported", resume: "supported" });
+  if (profile.planArgs?.length && profile.capabilities.plan === "unknown") profile.capabilities.plan = "supported";
   return profile;
 }
 
@@ -142,7 +187,7 @@ export function cliProfileForAgent(agent, config = {}) {
 
 async function resolveProfile(profile) {
   for (const command of profile.commands) {
-    const found = await resolveCommand(command);
+    const found = await resolveCommand(command, profile.versionArgs, { timeout: 8_000 });
     if (found) return { ...found, command };
   }
   return null;
@@ -160,11 +205,37 @@ export async function discoverAgents(config = {}) {
       command: found?.command || profile.commands[0],
       source: profile.source,
       adapter: profile.adapter,
-      supportsDirect: Boolean(profile.directArgs?.length),
-      supportsPlan: Boolean(profile.supportsPlan),
+      supportsDirect: profile.capabilities.direct === "supported" || Boolean(profile.directArgs?.length),
+      supportsPlan: profile.capabilities.plan === "supported" || Boolean(profile.supportsPlan),
       requiresAutoApproval: profile.requiresAutoApproval,
+      capabilities: { ...profile.capabilities },
     };
   }));
+}
+
+export function capabilitiesForAgent(agent, config = {}) {
+  const profile = cliProfileForAgent(agent, config);
+  const capabilities = profile?.capabilities || DEFAULT_CAPABILITIES;
+  const selected = profile?.id || String(agent || "unknown").trim().toLowerCase() || "unknown";
+  const wire = selected === "claude" ? "claude-code" : selected;
+  const tags = [`agent:${wire}`];
+  const tagsFor = (name, tag = name) => {
+    if (capabilities[name] === "supported") tags.push(tag);
+    else if (capabilities[name] === "unknown") tags.push(`${tag}:unknown`);
+  };
+  tagsFor("direct", "task:direct");
+  tagsFor("plan", "task:plan");
+  tagsFor("cancel", "task:cancel");
+  tagsFor("usage", "telemetry:usage");
+  tagsFor("providerModel", "telemetry:provider-model");
+  tagsFor("resume", "task:resume");
+  tags.push("task:pause", "task:checkpoint", "task:priority", "bridge:messages");
+  return [...new Set(tags)];
+}
+
+export function profileCapabilities(agent, config = {}) {
+  const profile = cliProfileForAgent(agent, config);
+  return profile ? { ...profile.capabilities } : { ...DEFAULT_CAPABILITIES };
 }
 
 function placeholder(value, context) {
@@ -198,6 +269,7 @@ export function buildCliArgs(profile, { prompt, cwd, config = {}, previousSessio
   let args = template.map((value) => placeholder(value, context));
   if (context.model && profile.modelArgs?.length && !args.includes(context.model)) args = appendPair(args, profile.modelArgs, context);
   if (context.provider && profile.providerArgs?.length && !args.includes(context.provider)) args = appendPair(args, profile.providerArgs, context);
+  if (previousSession && profile.capabilities.resume === "supported" && profile.resumeArgs?.length) args = appendPair(args, profile.resumeArgs, context);
   return args;
 }
 
@@ -389,6 +461,6 @@ export async function runCliTurn({ agent, taskDirectory, prompt, config = {}, pr
   const sanitizedEvents = result.events.map((event) => sanitize(event));
   await fs.writeFile(path.join(taskDirectory, "events.jsonl"), `${sanitizedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(taskDirectory, "artifacts", "conversation.md"), markdownFromEvents({ profile, prompt, sessionId, events: result.events, finalResponse }), "utf8");
-  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: profile.id, sessionId, command: resolved.command, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: profile.id, sessionId, attemptId: config.attemptId || null, command: resolved.command, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
   return { agent: profile.id, sessionId, finalResponse, events: result.events, usage: usageResult.usage };
 }

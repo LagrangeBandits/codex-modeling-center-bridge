@@ -138,3 +138,9 @@ node src/cli.mjs start --agent codex --concurrency 1
 站点桥接授权和 Runner token 保存在操作系统安全存储；任务工作区保存 `REQUEST.md`、`AGENTS.md`、`session.json`、脱敏的 `artifacts/conversation.md` 和原始本地 `events.jsonl`。原始事件只留在本机，网站只接收允许的交付文件和摘要。
 
 不要以管理员身份运行整个 Runner，不要复制任何设备的 Agent 登录目录，不要让不同设备共享工作区。完整安装与回滚注意事项见 [`docs/INSTALL-CHECKLIST.md`](docs/INSTALL-CHECKLIST.md)，任务交接见 [`docs/CAD-HANDOFF.md`](docs/CAD-HANDOFF.md)，架构与站点字段见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 和 [`docs/SITE-PROTOCOL.md`](docs/SITE-PROTOCOL.md)。
+
+### Agent 能力与安全暂停
+
+Runner 会自动探测已安装 CLI，并分别展示 direct、plan、streaming、usage、provider/model、cancel、resume 能力。Trae 等通用 CLI 如果无法确认真实输出格式或恢复语义，会显示 `unknown`/不支持，不会伪造 token 或断点能力。
+
+任务运行中可按站点的余额/限流控制在安全检查点暂停。Runner 以 `attemptId` 和递增 `sequence` 回传聚合用量，并使用本地脱敏 `checkpoint.json` 配合站点恢复；旧站点不存在新端点时继续走 404/405 和旧 complete fallback。

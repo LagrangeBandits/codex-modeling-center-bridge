@@ -1,9 +1,14 @@
 const CONTROL_ROLES = new Set(["user", "assistant", "system"]);
 const EXECUTION_MODES = new Set(["direct", "plan"]);
+const CONTROL_ACTIONS = new Set(["none", "pause", "resume", "cancel"]);
+const QUOTA_STATES = new Set(["ok", "insufficient", "rate_limited", "auth_required", "unknown"]);
+const USAGE_MODES = new Set(["cumulative", "delta"]);
+const CHECKPOINT_STAGES = new Set(["before_turn", "tool_boundary", "turn_boundary", "before_upload", "agent_error"]);
 const MODEL_PREFERENCE_MAX = 240;
 const MAX_MESSAGE_LENGTH = 8_000;
 const MAX_MESSAGES = 32;
 const MAX_CURSOR_LENGTH = 256;
+const MAX_ATTEMPT_ID_LENGTH = 160;
 const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const USAGE_KEYS = Object.freeze([
   "inputTokens",
@@ -27,6 +32,10 @@ function cleanText(value, limit = MAX_MESSAGE_LENGTH) {
 
 function cleanCursor(value) {
   return cleanText(value, MAX_CURSOR_LENGTH);
+}
+
+function cleanAttemptId(value) {
+  return cleanText(value, MAX_ATTEMPT_ID_LENGTH);
 }
 
 function safeModel(value) {
@@ -130,6 +139,8 @@ export function normalizeTask(value) {
     modelPreference: normalizeModelPreference(
       source.modelPreference ?? source.model_preference ?? source.modelPreferences ?? source.model,
     ),
+    attemptId: cleanAttemptId(source.attemptId ?? source.attempt_id ?? source.attempt),
+    checkpoint: normalizeCheckpoint(source.checkpoint ?? source.resumeCheckpoint),
   };
 }
 
@@ -178,15 +189,85 @@ export function cancellationState(value) {
   };
 }
 
+function booleanValue(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase())
+    ? true
+    : ["0", "false", "no", "off"].includes(String(value ?? "").trim().toLowerCase())
+      ? false
+      : null;
+}
+
+export function normalizeQuotaState(value) {
+  const state = String(value ?? "").trim().toLowerCase().replace(/[ -]+/g, "_");
+  return QUOTA_STATES.has(state) ? state : "unknown";
+}
+
+export function normalizeControlAction(value) {
+  const action = String(value ?? "").trim().toLowerCase().replace(/[ -]+/g, "_");
+  return CONTROL_ACTIONS.has(action) ? action : "none";
+}
+
+export function normalizeCheckpoint(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const stage = String(value.stage ?? value.checkpointStage ?? "").trim().toLowerCase();
+  const checkpointId = cleanAttemptId(value.checkpointId ?? value.checkpoint_id ?? value.id);
+  if (!checkpointId && !stage) return null;
+  return {
+    checkpointId,
+    checkpointVersion: cleanText(value.checkpointVersion ?? value.version, 40),
+    stage: CHECKPOINT_STAGES.has(stage) ? stage : "turn_boundary",
+    attemptId: cleanAttemptId(value.attemptId ?? value.attempt_id),
+    resumeSupported: booleanValue(value.resumeSupported ?? value.resume_supported),
+    resumeFrom: cleanAttemptId(value.resumeFrom ?? value.resume_from ?? value.resumeToken ?? value.resume_token),
+    reasonCode: cleanText(value.reasonCode ?? value.reason_code ?? value.reason, 120),
+    createdAt: cleanText(value.createdAt ?? value.created_at, 80),
+  };
+}
+
+export function normalizeUsageMetadata(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const mode = String(source.usageMode ?? source.usage_mode ?? "").trim().toLowerCase();
+  const usageComplete = booleanValue(source.usageComplete ?? source.usage_complete);
+  return {
+    attemptId: cleanAttemptId(source.attemptId ?? source.attempt_id),
+    sequence: tokenNumber(source.sequence),
+    usageMode: USAGE_MODES.has(mode) ? mode : null,
+    usageSource: cleanText(source.usageSource ?? source.usage_source, 120),
+    usageComplete,
+    observedAt: cleanText(source.observedAt ?? source.observed_at, 80),
+  };
+}
+
 export function normalizeControlPayload(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const cancellation = cancellationState(source);
-  return {
+  const control = {
     cursor: cleanCursor(source.cursor ?? source.nextCursor ?? source.next_cursor),
     cancelRequested: cancellation.requested,
     cancelReason: cancellation.reason,
     messages: normalizeTaskMessages(source.messages ?? source.webMessages ?? source.items),
   };
+  const action = normalizeControlAction(source.action ?? source.controlAction ?? source.control_action);
+  const quota = source.quotaState ?? source.quota_state ?? source.billingState ?? source.billing_state;
+  const pause = booleanValue(source.pauseRequested ?? source.pause_requested);
+  const retryAfter = source.retryAfter ?? source.retry_after;
+  const checkpoint = normalizeCheckpoint(source.checkpoint ?? source.checkpointRequest ?? source.checkpoint_request);
+  const attemptId = cleanAttemptId(source.attemptId ?? source.attempt_id ?? source.attempt);
+  if (action !== "none") control.action = action;
+  if (quota !== undefined) control.quotaState = normalizeQuotaState(quota);
+  if (pause !== null) control.pauseRequested = pause;
+  if (source.pauseReason !== undefined || source.pause_reason !== undefined || source.reasonCode !== undefined || source.reason_code !== undefined) {
+    control.pauseReason = cleanText(source.pauseReason ?? source.pause_reason ?? source.reasonCode ?? source.reason_code, 240);
+  }
+  if (retryAfter !== undefined && retryAfter !== null) control.retryAfter = cleanText(retryAfter, 80) || tokenNumber(retryAfter);
+  if (checkpoint) control.checkpoint = checkpoint;
+  if (attemptId) control.attemptId = attemptId;
+  if (source.resumeRequested !== undefined || source.resume_requested !== undefined) {
+    control.resumeRequested = booleanValue(source.resumeRequested ?? source.resume_requested);
+  }
+  return control;
 }
 
 export function normalizeUsage(raw) {
@@ -219,11 +300,19 @@ export function usagePayload(value) {
 export function normalizeTelemetry(value) {
   if (value === null) return { provider: null, model: null, usage: null };
   const source = value && typeof value === "object" ? value : {};
-  return {
+  const telemetry = {
     provider: safeModel(source.provider) || "unknown",
     model: safeModel(source.model),
     usage: usagePayload(source.usage),
   };
+  const metadata = normalizeUsageMetadata(source);
+  if (metadata.attemptId) telemetry.attemptId = metadata.attemptId;
+  if (metadata.sequence !== null) telemetry.sequence = metadata.sequence;
+  if (metadata.usageMode) telemetry.usageMode = metadata.usageMode;
+  if (metadata.usageSource) telemetry.usageSource = metadata.usageSource;
+  if (metadata.usageComplete !== null) telemetry.usageComplete = metadata.usageComplete;
+  if (metadata.observedAt) telemetry.observedAt = metadata.observedAt;
+  return telemetry;
 }
 
-export { MAX_MESSAGE_LENGTH, MAX_MESSAGES, USAGE_KEYS };
+export { CHECKPOINT_STAGES, CONTROL_ACTIONS, MAX_ATTEMPT_ID_LENGTH, MAX_MESSAGE_LENGTH, MAX_MESSAGES, QUOTA_STATES, USAGE_KEYS, USAGE_MODES };

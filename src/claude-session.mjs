@@ -310,6 +310,6 @@ export async function runClaudeTurn({ taskDirectory, prompt, config, previousSes
   const sanitizedEvents = result.events.map((event) => sanitize(event));
   await fs.writeFile(path.join(taskDirectory, "events.jsonl"), `${sanitizedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(taskDirectory, "artifacts", "conversation.md"), markdownFromEvents({ prompt, sessionId, events: result.events, finalResponse }), "utf8");
-  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "claude", sessionId, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(taskDirectory, "session.json"), `${JSON.stringify({ agent: "claude", sessionId, attemptId: config.attemptId || null, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
   return { agent: "claude", sessionId, finalResponse, events: result.events, usage: usageResult.usage };
 }

@@ -7,6 +7,9 @@ import {
   normalizeTaskMessage,
 } from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
 
+const usageSequenceSent = new Map();
+const usageSequenceInFlight = new Map();
+
 export function normalizeSite(value) {
   return normalizeContractSite(value);
 }
@@ -141,8 +144,36 @@ export async function cancelTask(config, taskId, reason = "", telemetry = undefi
 }
 
 export async function reportTaskUsage(config, taskId, telemetry) {
+  const sequence = Number.isSafeInteger(telemetry?.sequence) ? telemetry.sequence : null;
+  const key = `${normalizeSite(config.site)}:${String(taskId)}`;
+  if (sequence !== null && sequence <= (usageSequenceSent.get(key) ?? -1)) {
+    return { skipped: true, duplicate: true, sequence };
+  }
+  const inFlightKey = sequence === null ? null : `${key}:${sequence}`;
+  if (inFlightKey && usageSequenceInFlight.has(inFlightKey)) return usageSequenceInFlight.get(inFlightKey);
   const client = await modelingClient(config);
-  return client.reportUsage(taskId, telemetry);
+  const request = client.reportUsage(taskId, telemetry)
+    .then((response) => {
+      if (sequence !== null) usageSequenceSent.set(key, Math.max(usageSequenceSent.get(key) ?? -1, sequence));
+      return response;
+    })
+    .finally(() => {
+      if (inFlightKey) usageSequenceInFlight.delete(inFlightKey);
+    });
+  if (inFlightKey) usageSequenceInFlight.set(inFlightKey, request);
+  return request;
+}
+
+/** Optional safe pause/checkpoint endpoint. A 404/405 is handled by the client fallback. */
+export async function checkpointTask(config, taskId, checkpoint) {
+  const client = await modelingClient(config);
+  return client.checkpointWithFallback(taskId, checkpoint);
+}
+
+/** Optional explicit resume endpoint for sites that resume an existing attempt in place. */
+export async function resumeTask(config, taskId, resume) {
+  const client = await modelingClient(config);
+  return client.resume(taskId, resume);
 }
 
 export async function submitFeedback(config, payload) {

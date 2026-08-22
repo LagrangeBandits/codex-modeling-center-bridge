@@ -1,17 +1,20 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { agentLabel, BRIDGE_VERSION, defaultTaskDirectory, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, isSafeTaskId, normalizeAgent, normalizeExecutionMode, platformId, platformLabel, resolveTaskAgent } from "./constants.mjs";
 import { collectArtifacts, hasCadArtifact } from "./artifacts.mjs";
 import { runAgentTurn, sessionReference } from "./agent-session.mjs";
 import { identityFromEvent, identityFromEvents, loadLocalAgentIdentity } from "./agent-identity.mjs";
 import { loadSession, prepareTaskDirectory, redactForLog } from "./codex-session.mjs";
+import { loadLocalCheckpoint, writeLocalCheckpoint } from "./checkpoint.mjs";
 import { loadConfig } from "./state.mjs";
-import { cancelTask, completeTask, pollTask, pollTaskControl, reportTaskUsage, sendEvent, sendHeartbeat, sendTaskMessage, uploadArtifact } from "./site-client.mjs";
+import { cancelTask, checkpointTask, completeTask, pollTask, pollTaskControl, reportTaskUsage, sendEvent, sendHeartbeat, sendTaskMessage, uploadArtifact } from "./site-client.mjs";
 import { sleep } from "./process.mjs";
-import { extractUsageFromEvent, usagePayload } from "./usage.mjs";
+import { createUsageAccumulator, usagePayload } from "./usage.mjs";
+import { capabilitiesForAgent, profileCapabilities } from "./cli-agents.mjs";
 import { collectSystemMetrics, heartbeatPayload } from "./heartbeat.mjs";
-import { cancellationState, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, TaskCancelledError, taskMessagesFromTask, taskPromptWithMessages } from "./task-control.mjs";
+import { cancellationState, isQuotaError, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, pauseDirective, TaskCancelledError, TaskPausedError, taskMessagesFromTask, taskPromptWithMessages } from "./task-control.mjs";
 import { normalizeTask as normalizeModelingTask } from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
 
 const CONTROL_POLL_INTERVAL_MS = 1_500;
@@ -22,6 +25,28 @@ async function report(config, taskId, stage, progress, message, telemetry = unde
   } catch (error) {
     console.error(`进度回传失败：${redactForLog(error.message)}`);
   }
+}
+
+async function reportUsage(config, taskId, telemetry) {
+  if (!telemetry?.usage || !Number.isSafeInteger(telemetry.sequence)) return;
+  try {
+    await reportTaskUsage(config, taskId, telemetry);
+  } catch (error) {
+    console.error(`用量回传失败（不影响当前任务）：${redactForLog(error?.message || error)}`);
+  }
+}
+
+function resumeSupportedForAgent(agent, config = {}, previousSession = null) {
+  if (!previousSession) return false;
+  if (agent === "codex" || agent === "claude") return true;
+  return profileCapabilities(agent, config).resume === "supported";
+}
+
+function structuredRunnerLog(type, fields = {}) {
+  const safe = Object.fromEntries(Object.entries(fields)
+    .filter(([, value]) => value === null || typeof value === "boolean" || Number.isFinite(value) || typeof value === "string")
+    .map(([key, value]) => [key, typeof value === "string" ? redactForLog(value).slice(0, 240) : value]));
+  console.log(`[bridge-event] ${JSON.stringify({ schemaVersion: 1, type, at: new Date().toISOString(), ...safe })}`);
 }
 
 class TaskControlChannel {
@@ -36,6 +61,9 @@ class TaskControlChannel {
     this.lastWarningAt = 0;
     this.timer = null;
     this.cancellationError = null;
+    this.pauseState = { requested: false, action: "none", quotaState: "unknown", reason: null, retryAfter: null, checkpoint: null, attemptId: null };
+    this.pauseReported = false;
+    this.checkpoint = null;
     this.abortController = new AbortController();
   }
 
@@ -71,6 +99,11 @@ class TaskControlChannel {
           this.messages = normalizeTaskMessages([...this.messages, ...control.messages]);
         }
         if (control.cancelRequested) this.requestCancellation(control.cancelReason);
+        const directive = pauseDirective(control);
+        if (directive.requested) this.pauseState = directive;
+        if (control.resumeRequested === true || control.action === "resume") {
+          this.pauseState = { ...this.pauseState, requested: false, action: "resume" };
+        }
         return control;
       })
       .catch((error) => {
@@ -93,6 +126,82 @@ class TaskControlChannel {
   async check(force = false) {
     await this.poll(force);
     if (this.cancellationError) throw this.cancellationError;
+  }
+
+  get shouldPause() {
+    return this.pauseState.requested === true && !this.pauseReported;
+  }
+
+  requestLocalPause(reason, quotaState = "unknown") {
+    this.pauseState = {
+      ...this.pauseState,
+      requested: true,
+      action: "pause",
+      quotaState,
+      reason: reason || this.pauseState.reason || "本地 Agent 用量或网站余额要求暂停。",
+    };
+  }
+
+  async pauseAtCheckpoint({ taskDirectory, attemptId, agent, provider, model, usage, sessionRef, eventCount, stage, resumeSupported, reasonCode }) {
+    if (!this.shouldPause) return null;
+    const local = await writeLocalCheckpoint(taskDirectory, {
+      taskId: this.taskId,
+      attemptId: attemptId || this.pauseState.attemptId,
+      agent,
+      provider,
+      model,
+      usage,
+      sessionRef,
+      eventCount,
+      stage,
+      resumeSupported,
+      reasonCode: reasonCode || this.pauseState.reason || this.pauseState.quotaState,
+      checkpoint: this.pauseState.checkpoint,
+    });
+    try {
+      await checkpointTask(this.config, this.taskId, {
+        attemptId: attemptId || this.pauseState.attemptId,
+        checkpoint: {
+          checkpointId: local.checkpointId,
+          checkpointVersion: local.checkpointVersion,
+          stage: local.stage,
+          attemptId: local.attemptId,
+          resumeSupported: local.resumeSupported,
+          reasonCode: local.reasonCode,
+          createdAt: local.createdAt,
+        },
+        quotaState: this.pauseState.quotaState,
+        pauseReason: this.pauseState.reason,
+        retryAfter: this.pauseState.retryAfter,
+        resumeSupported: local.resumeSupported,
+        resumeFrom: local.checkpointId,
+        provider,
+        model,
+        usage,
+      });
+    } catch (error) {
+      const failure = new Error(`安全暂停状态回传失败：${redactForLog(error?.message || error)}`);
+      failure.code = "CHECKPOINT_REPORT_FAILED";
+      failure.cause = error;
+      failure.checkpoint = local;
+      throw failure;
+    }
+    this.pauseReported = true;
+    this.checkpoint = local;
+    structuredRunnerLog("task.paused", {
+      taskId: this.taskId,
+      attemptId: local.attemptId,
+      checkpointId: local.checkpointId,
+      stage: local.stage,
+      quotaState: this.pauseState.quotaState,
+      resumeSupported: local.resumeSupported,
+    });
+    throw new TaskPausedError(this.pauseState.reason || "任务已安全暂停，等待网站恢复。", {
+      checkpoint: local,
+      checkpointSent: true,
+      retryAfter: this.pauseState.retryAfter,
+      quotaState: this.pauseState.quotaState,
+    });
   }
 
   async publishAssistantMessage(message) {
@@ -153,13 +262,25 @@ async function runTaskInternal(config, task, execution) {
   if (task?.agent && task.agent !== "any" && selectedAgent !== config.agent) {
     throw new Error(`任务要求使用 ${agentLabel(selectedAgent)}，但本机已配对为 ${agentLabel(config.agent)}。请让网站把任务分配给匹配的设备，或重新配对。`);
   }
-  const taskConfig = { ...config, ...resolveTaskPreferences(task), agent: selectedAgent, executionMode };
+  const attemptId = task.attemptId || task.attempt_id || randomUUID();
+  const taskConfig = { ...config, ...resolveTaskPreferences(task), agent: selectedAgent, executionMode, attemptId };
   const selectedAgentLabel = agentLabel(selectedAgent);
   const priority = normalizeTaskPriority(task?.priority);
   const taskContext = { priority, executionMode };
   const control = new TaskControlChannel(config, task.id);
   execution.control = control;
+  execution.attemptId = attemptId;
   control.start();
+  const taskPause = pauseDirective(task);
+  if (taskPause.requested) {
+    control.requestLocalPause(taskPause.reason, taskPause.quotaState);
+    control.pauseState = {
+      ...control.pauseState,
+      retryAfter: taskPause.retryAfter,
+      checkpoint: taskPause.checkpoint,
+      attemptId: taskPause.attemptId || attemptId,
+    };
+  }
   const initialCancellation = cancellationState(task);
   if (initialCancellation.requested) control.requestCancellation(initialCancellation.reason);
   await control.check(true);
@@ -169,16 +290,55 @@ async function runTaskInternal(config, task, execution) {
     provider: initialIdentity.provider,
     model: initialIdentity.model,
     usage: null,
+    attemptId,
   };
   execution.telemetry = telemetry;
   execution.onTelemetry?.(telemetry);
   const taskDirectory = defaultTaskDirectory(config.workspace, task.id);
   await prepareTaskDirectory(taskDirectory, { ...task, prompt: taskPrompt });
   const previousSession = await loadSession(taskDirectory);
+  const localCheckpoint = await loadLocalCheckpoint(taskDirectory);
   if (previousSession?.agent && previousSession.agent !== selectedAgent) {
     throw new Error(`该任务已有 ${agentLabel(previousSession.agent)} 本地会话，不能改用 ${selectedAgentLabel} 继续；请使用原 Agent 或建立新任务。`);
   }
+  if (control.shouldPause) {
+    await control.pauseAtCheckpoint({
+      taskDirectory,
+      attemptId,
+      agent: selectedAgent,
+      provider: initialIdentity.provider,
+      model: initialIdentity.model,
+      usage: null,
+      sessionRef: sessionReference(previousSession) || localCheckpoint?.sessionRef || null,
+      eventCount: 0,
+      stage: "before_turn",
+      resumeSupported: resumeSupportedForAgent(selectedAgent, taskConfig, previousSession),
+    });
+  }
+  const usageAccumulator = createUsageAccumulator({ attemptId, usageSource: `${selectedAgent}:event` });
+  execution.usageAccumulator = usageAccumulator;
   let lastEventAt = 0;
+
+  const recordUsage = async (event) => {
+    const envelope = usageAccumulator.update(selectedAgent, event);
+    if (!envelope) return false;
+    telemetry.usage = usagePayload(envelope.usage);
+    telemetry.sequence = envelope.sequence;
+    telemetry.usageMode = envelope.usageMode;
+    telemetry.usageSource = envelope.usageSource;
+    telemetry.usageComplete = envelope.usageComplete;
+    telemetry.observedAt = envelope.observedAt;
+    execution.onTelemetry?.(telemetry);
+    await reportUsage(config, task.id, telemetry);
+    structuredRunnerLog("usage.update", {
+      taskId: task.id,
+      attemptId,
+      sequence: envelope.sequence,
+      usageMode: envelope.usageMode,
+      usageComplete: envelope.usageComplete,
+    });
+    return true;
+  };
 
   await report(config, task.id, "planning", 16, executionMode === "plan"
     ? `${selectedAgentLabel} 正在整理建模方案，不会运行 CAD 或上传模型文件。`
@@ -187,7 +347,9 @@ async function runTaskInternal(config, task, execution) {
     await report(config, task.id, "modeling", 30, `${selectedAgentLabel} 正在本地生成参数化 CAD。`, telemetry, taskContext);
   }
 
-  const result = await runAgentTurn({
+  let result;
+  try {
+    result = await runAgentTurn({
     agent: selectedAgent,
     taskDirectory,
     prompt: [
@@ -211,11 +373,11 @@ async function runTaskInternal(config, task, execution) {
       if (eventIdentity.provider && eventIdentity.provider !== "unknown") telemetry.provider = eventIdentity.provider;
       if (eventIdentity.model) telemetry.model = eventIdentity.model;
       execution.onTelemetry?.(telemetry);
-      const eventUsage = extractUsageFromEvent(selectedAgent, event);
-      if (eventUsage) {
-        telemetry.usage = usagePayload(eventUsage.usage);
-        execution.onTelemetry?.(telemetry);
-        await report(config, task.id, "validating", 72, `${selectedAgentLabel} 回合完成，正在整理用量和任务结果。`, telemetry, taskContext);
+      const hasUsage = await recordUsage(event);
+      if (hasUsage) {
+        await report(config, task.id, telemetry.usageComplete ? "validating" : "modeling", telemetry.usageComplete ? 72 : 60, telemetry.usageComplete
+          ? `${selectedAgentLabel} 回合完成，正在整理用量和任务结果。`
+          : `${selectedAgentLabel} 正在接收本地 Agent 用量进度。`, telemetry, taskContext);
         return;
       }
       const now = Date.now();
@@ -242,14 +404,57 @@ async function runTaskInternal(config, task, execution) {
         }
       }
     },
-  });
+    });
+  } catch (error) {
+    if (isQuotaError(error) && previousSession && resumeSupportedForAgent(selectedAgent, taskConfig, previousSession)) {
+      control.requestLocalPause(redactForLog(error?.message || "本地 Agent 额度不足。"), Number(error?.status) === 429 ? "rate_limited" : "insufficient");
+      await control.pauseAtCheckpoint({
+        taskDirectory,
+        attemptId,
+        agent: selectedAgent,
+        provider: telemetry.provider,
+        model: telemetry.model,
+        usage: error?.usage ?? telemetry.usage,
+        sessionRef: sessionReference(previousSession),
+        eventCount: 0,
+        stage: "agent_error",
+        resumeSupported: true,
+        reasonCode: Number(error?.status) === 429 ? "RATE_LIMITED" : "INSUFFICIENT_BALANCE",
+      });
+    }
+    throw error;
+  }
 
   await control.check(true);
 
   if (result.provider && result.provider !== "unknown") telemetry.provider = result.provider;
   telemetry.model = result.model || telemetry.model;
-  telemetry.usage = usagePayload(result.usage ?? telemetry.usage);
+  if (usageAccumulator.sequence === 0 && result.usage) {
+    await recordUsage({
+      type: selectedAgent === "codex" ? "turn.completed" : selectedAgent === "claude" ? "result" : "result",
+      usage: result.usage,
+      usageMode: "cumulative",
+      usageSource: `${selectedAgent}:result`,
+    });
+  } else {
+    telemetry.usage = usagePayload(telemetry.usage ?? result.usage);
+  }
   execution.onTelemetry?.(telemetry);
+
+  if (control.shouldPause) {
+    await control.pauseAtCheckpoint({
+      taskDirectory,
+      attemptId,
+      agent: selectedAgent,
+      provider: telemetry.provider,
+      model: telemetry.model,
+      usage: telemetry.usage,
+      sessionRef: sessionReference(result) || sessionReference(previousSession),
+      eventCount: Array.isArray(result.events) ? result.events.length : 0,
+      stage: "turn_boundary",
+      resumeSupported: resumeSupportedForAgent(selectedAgent, taskConfig, result),
+    });
+  }
 
   const summary = String(result.finalResponse || (executionMode === "plan"
     ? `${selectedAgentLabel} 已完成建模方案。`
@@ -264,12 +469,40 @@ async function runTaskInternal(config, task, execution) {
   }
 
   await control.check(true);
+  if (control.shouldPause) {
+    await control.pauseAtCheckpoint({
+      taskDirectory,
+      attemptId,
+      agent: selectedAgent,
+      provider: telemetry.provider,
+      model: telemetry.model,
+      usage: telemetry.usage,
+      sessionRef: sessionReference(result),
+      eventCount: Array.isArray(result.events) ? result.events.length : 0,
+      stage: "before_upload",
+      resumeSupported: resumeSupportedForAgent(selectedAgent, taskConfig, result),
+    });
+  }
   const artifacts = await collectArtifacts(taskDirectory);
   if (!hasCadArtifact(artifacts)) throw new Error("没有发现 STEP、STL 或其他 CAD 输出文件。");
 
   await report(config, task.id, "delivering", 88, `发现 ${artifacts.length} 个交付文件，正在上传到私有对象存储。`, telemetry, taskContext);
   for (const file of artifacts) {
     await control.check(true);
+    if (control.shouldPause) {
+      await control.pauseAtCheckpoint({
+        taskDirectory,
+        attemptId,
+        agent: selectedAgent,
+        provider: telemetry.provider,
+        model: telemetry.model,
+        usage: telemetry.usage,
+        sessionRef: sessionReference(result),
+        eventCount: Array.isArray(result.events) ? result.events.length : 0,
+        stage: "before_upload",
+        resumeSupported: resumeSupportedForAgent(selectedAgent, taskConfig, result),
+      });
+    }
     await uploadArtifact(config, task.id, path.basename(file), await fs.readFile(file), task.maxArtifactBytes);
   }
   await control.check(true);
@@ -300,6 +533,11 @@ async function runOne(config, task, onTelemetry = undefined) {
     await runTask(config, task, onTelemetry);
   } catch (error) {
     const message = redactForLog(error instanceof Error ? error.message : String(error));
+    if (error?.code === "TASK_PAUSED") {
+      console.log(`任务已暂停 ${task.id}：${message}`);
+      structuredRunnerLog("task.paused", { taskId: task.id, checkpointId: error.checkpoint?.checkpointId, resumeSupported: error.checkpoint?.resumeSupported });
+      return;
+    }
     console.error(`任务失败 ${task.id}：${message}`);
     if (error?.code === "TASK_CANCELLED") {
       try {
@@ -386,6 +624,7 @@ export async function startRunner(options = {}) {
       activeTasks: active.size,
       capacity: concurrency,
       metrics,
+      capabilities: capabilitiesForAgent(config.agent, config),
     });
     Promise.resolve(sendHeartbeat(config, payload))
       .catch((error) => {
@@ -426,7 +665,19 @@ export async function startRunner(options = {}) {
         break;
       }
       if (!payload?.task) break;
-      const taskPromise = runOne(config, payload.task, absorbTelemetry).finally(() => {
+      const serverControl = payload.control && typeof payload.control === "object" ? payload.control : {};
+      const task = {
+        ...payload.task,
+        ...(payload.action !== undefined || serverControl.action !== undefined ? { action: payload.action ?? serverControl.action } : {}),
+        ...(payload.controlAction !== undefined || serverControl.controlAction !== undefined ? { controlAction: payload.controlAction ?? serverControl.controlAction } : {}),
+        ...(payload.quotaState !== undefined || serverControl.quotaState !== undefined ? { quotaState: payload.quotaState ?? serverControl.quotaState } : {}),
+        ...(payload.pauseRequested !== undefined || serverControl.pauseRequested !== undefined ? { pauseRequested: payload.pauseRequested ?? serverControl.pauseRequested } : {}),
+        ...(payload.pauseReason !== undefined || serverControl.pauseReason !== undefined ? { pauseReason: payload.pauseReason ?? serverControl.pauseReason } : {}),
+        ...(payload.retryAfter !== undefined || serverControl.retryAfter !== undefined ? { retryAfter: payload.retryAfter ?? serverControl.retryAfter } : {}),
+        ...(payload.checkpoint !== undefined || serverControl.checkpoint !== undefined ? { checkpoint: payload.checkpoint ?? serverControl.checkpoint } : {}),
+        ...(payload.attemptId !== undefined || serverControl.attemptId !== undefined ? { attemptId: payload.attemptId ?? serverControl.attemptId } : {}),
+      };
+      const taskPromise = runOne(config, task, absorbTelemetry).finally(() => {
         active.delete(taskPromise);
         triggerHeartbeat(true);
       });
@@ -483,6 +734,12 @@ export async function reconcileLocalUsage(config, taskId) {
     provider: identity.provider,
     model: identity.model,
     usage: usagePayload(usageResult.usage),
+    attemptId: session?.attemptId || randomUUID(),
+    sequence: 1,
+    usageMode: "cumulative",
+    usageSource: "bridge:reconcile",
+    usageComplete: true,
+    observedAt: new Date().toISOString(),
   };
   const response = await reportTaskUsage(config, taskId, telemetry);
   console.log(`已补回任务用量：${taskId} · ${telemetry.provider}/${telemetry.model || "unknown"} · ${telemetry.usage.totalTokens} tokens`);

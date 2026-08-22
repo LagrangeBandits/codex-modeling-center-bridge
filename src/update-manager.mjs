@@ -121,6 +121,9 @@ export function normalizeUpdateInfo(info, currentVersion = "unknown") {
     releaseDate: safeDate(source.releaseDate),
     releaseNotesUrl: releaseUrl(version),
     assetName: safeAssetName(source.path),
+    features: Array.isArray(source.features)
+      ? source.features.filter((feature) => typeof feature === "string" && /^[A-Za-z0-9._:-]{1,80}$/.test(feature)).slice(0, 32)
+      : [],
   };
 }
 

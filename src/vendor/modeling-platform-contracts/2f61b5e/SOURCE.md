@@ -5,4 +5,5 @@
 - Source commit: 00a02e5902e350c0b1dca4bdda928de7b7ca2f91
 - Snapshot files: src/contracts.mjs, src/sdk.mjs, src/index.mjs
 - Runtime dependency: none; these files are bundled with the Bridge.
+- Bridge extension: this vendored copy also contains optional backward-compatible usage sequence and pause/checkpoint normalization used by the Bridge runner; it does not add a runtime dependency on the source repository.
 - Update: set MODELING_PLATFORM_CONTRACTS_SOURCE to a checked-out source repository at the expected commit, then run node scripts/sync-modeling-platform-contracts.mjs.

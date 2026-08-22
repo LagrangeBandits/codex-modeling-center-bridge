@@ -40,6 +40,7 @@ const repository = argument("--repository", "LagrangeBandits/codex-modeling-cent
 const releaseTag = `v${version || ""}`;
 const releaseUrl = argument("--release-url", `https://github.com/${repository}/releases/tag/${releaseTag}`);
 const minSupportedVersion = normalizeVersion(argument("--min-supported-version", "0.1.0"));
+const sourceCommit = String(argument("--source-commit", process.env.GITHUB_SHA || "")).trim() || null;
 
 if (!version) fail("无法从 package.json 或参数取得有效版本。");
 if (!minSupportedVersion) fail("最低支持版本无效。");
@@ -81,8 +82,19 @@ for (const name of releaseFiles) {
   });
 }
 
+if (!assets.some((asset) => asset.platform === "macos" && asset.type === "installer" && asset.architecture === "arm64")) fail("构建资产缺少 macOS arm64 DMG。");
+if (!assets.some((asset) => asset.platform === "windows" && asset.type === "installer" && asset.architecture === "x64")) fail("构建资产缺少 Windows x64 EXE。");
+
+const protocolFeatures = [
+  "cli-capabilities",
+  "usage-sequences",
+  "pause-checkpoint-resume",
+  "heartbeat-capabilities",
+  "legacy-protocol-fallback",
+];
+
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   product: packageJson.productName || packageJson.name,
   appId: packageJson.build?.appId || null,
   channel: "stable",
@@ -93,7 +105,14 @@ const manifest = {
   publishedAt: new Date().toISOString(),
   minSupportedVersion,
   requiresRestart: true,
-  protocol: { min: 1, max: 1 },
+  sourceCommit,
+  protocol: {
+    min: 1,
+    max: 2,
+    features: protocolFeatures,
+  },
+  features: protocolFeatures,
+  siteContract: { min: 1, max: 2 },
   assets,
 };
 

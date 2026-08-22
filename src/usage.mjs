@@ -29,6 +29,31 @@ function usageObjectFromEvent(event) {
   return null;
 }
 
+function usageModeFromEvent(event) {
+  const mode = String(event?.usageMode ?? event?.usage_mode ?? event?.usage?.mode ?? "").trim().toLowerCase();
+  return mode === "delta" ? "delta" : "cumulative";
+}
+
+function usageSourceFromEvent(agent, event) {
+  const source = event?.usageSource ?? event?.usage_source ?? event?.source;
+  if (typeof source === "string" && source.trim()) return source.trim().slice(0, 120);
+  return `${String(agent || "agent").trim().toLowerCase() || "agent"}:event`;
+}
+
+function observedAtFromEvent(event) {
+  const value = event?.observedAt ?? event?.observed_at ?? event?.timestamp ?? event?.created_at ?? event?.createdAt;
+  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 80);
+  return new Date().toISOString();
+}
+
+function usageCompleteForEvent(agent, event, normalized) {
+  const explicit = event?.usageComplete ?? event?.usage_complete;
+  if (explicit === true) return true;
+  if (!normalized.complete) return false;
+  if (agent === "codex" || agent === "claude" || agent === "claude-code") return terminalEventForAgent(agent, event);
+  return ["result", "complete", "completed", "turn.completed", "task.completed"].includes(String(event?.type || "").toLowerCase());
+}
+
 /**
  * Convert the provider-specific usage object into the bridge protocol shape.
  * The result deliberately contains only aggregate token counts and nulls.
@@ -38,8 +63,16 @@ export function normalizeUsage(raw) {
 }
 
 export function extractUsageFromEvent(agent, event) {
-  if (!terminalEventForAgent(agent, event)) return null;
-  return normalizeUsage(usageObjectFromEvent(event));
+  const raw = usageObjectFromEvent(event);
+  if (!raw) return null;
+  const normalized = normalizeUsage(raw);
+  return {
+    ...normalized,
+    usageMode: usageModeFromEvent(event),
+    usageSource: usageSourceFromEvent(agent, event),
+    usageComplete: usageCompleteForEvent(agent, event, normalized),
+    observedAt: observedAtFromEvent(event),
+  };
 }
 
 export function extractAgentUsage(agent, events) {
@@ -74,8 +107,12 @@ export function modelFromEvent(event) {
   const directCandidates = [
     event?.model,
     event?.model_name,
+    event?.model_id,
     event?.modelName,
+    event?.data?.model,
+    event?.data?.model_name,
     event?.message?.model,
+    event?.message?.model_name,
     event?.item?.model,
     event?.response?.model,
     event?.output?.model,
@@ -109,6 +146,71 @@ export function agentTelemetry(agent, events, configuredModel, usage) {
     provider: providerForAgent(agent),
     model: modelFromEvents(events, configuredModel),
     usage: usagePayload(usage),
+  };
+}
+
+function addUsage(base, delta) {
+  const result = { ...base };
+  for (const key of USAGE_KEYS) {
+    const value = Number.isSafeInteger(delta?.[key]) && delta[key] >= 0 ? delta[key] : null;
+    if (value === null) continue;
+    result[key] = (Number.isSafeInteger(result[key]) ? result[key] : 0) + value;
+  }
+  if (result.totalTokens === null && result.inputTokens !== null && result.outputTokens !== null) {
+    result.totalTokens = result.inputTokens + result.outputTokens;
+  }
+  return result;
+}
+
+function replaceKnownUsage(base, next) {
+  const result = { ...base };
+  for (const key of USAGE_KEYS) {
+    if (Number.isSafeInteger(next?.[key]) && next[key] >= 0) result[key] = next[key];
+  }
+  if (result.totalTokens === null && result.inputTokens !== null && result.outputTokens !== null) {
+    result.totalTokens = result.inputTokens + result.outputTokens;
+  }
+  return result;
+}
+
+/**
+ * Accumulates provider usage without retaining or uploading raw provider events.
+ * Providers may emit cumulative snapshots or explicit deltas; each emitted
+ * envelope gets a monotonic task-local sequence for idempotent server writes.
+ */
+export function createUsageAccumulator({ attemptId = null, usageSource = "agent:event" } = {}) {
+  let sequence = 0;
+  let aggregate = emptyUsage();
+  let lastEnvelope = null;
+
+  function update(agent, event) {
+    const envelope = extractUsageFromEvent(agent, event);
+    if (!envelope) return null;
+    aggregate = envelope.usageMode === "delta"
+      ? addUsage(aggregate, envelope.usage)
+      : replaceKnownUsage(aggregate, envelope.usage);
+    sequence += 1;
+    lastEnvelope = {
+      attemptId: typeof attemptId === "string" && attemptId.trim() ? attemptId.trim().slice(0, 160) : null,
+      sequence,
+      usageMode: envelope.usageMode,
+      usageSource: envelope.usageSource || usageSource,
+      usageComplete: envelope.usageComplete,
+      observedAt: envelope.observedAt,
+      usage: usagePayload(aggregate),
+    };
+    return { ...lastEnvelope };
+  }
+
+  function snapshot() {
+    return lastEnvelope ? { ...lastEnvelope, usage: usagePayload(lastEnvelope.usage) } : null;
+  }
+
+  return {
+    update,
+    snapshot,
+    get sequence() { return sequence; },
+    get usage() { return usagePayload(aggregate); },
   };
 }
 

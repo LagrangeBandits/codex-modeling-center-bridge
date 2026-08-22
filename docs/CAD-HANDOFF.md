@@ -34,3 +34,7 @@ Runner 优先读取 `GET /api/runner/messages?taskId=...` 的 `cancelRequestedAt
 3. `plan` 是否未产生或上传 CAD 文件，`direct` 是否存在验证后的 CAD 文件；
 4. 取消时是否在安全检查点停止；
 5. 本地日志是否没有密钥、登录状态、完整 transcript 或未脱敏命令参数。
+
+## 配额暂停与恢复
+
+余额不足、限流或站点明确 `pauseRequested` 时，Runner 会先写入不含 transcript、密钥和完整本地路径的 `checkpoint.json`，再回传 `checkpointId`、`attemptId`、阶段、聚合 usage、`resumeSupported` 和原因码。只有 Agent 真正支持会话恢复时才允许标记可恢复；不支持恢复的 CLI 不得伪装成可继续执行。
