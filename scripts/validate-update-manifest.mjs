@@ -15,13 +15,14 @@ const requiredFeatures = new Set([
   "usage-sequences",
   "pause-checkpoint-resume",
   "heartbeat-capabilities",
+  "terminal-task-cleanup",
   "legacy-protocol-fallback",
 ]);
 if (manifest.schemaVersion !== 2) throw new Error("update-manifest schemaVersion 必须为 2。");
 if (!manifest.version || !manifest.releaseTag || !manifest.releaseUrl) throw new Error("update-manifest 缺少版本或 Release 信息。");
 if (process.env.GITHUB_ACTIONS === "true" && !/^[a-f0-9]{40}$/i.test(String(manifest.sourceCommit || ""))) throw new Error("CI 发布清单缺少可追溯 sourceCommit。");
 if (manifest.requiresRestart !== true) throw new Error("update-manifest 必须声明 requiresRestart=true。");
-if (manifest.protocol?.min !== 1 || manifest.protocol?.max !== 2) throw new Error("update-manifest protocol 范围不正确。");
+if (manifest.protocol?.min !== 1 || manifest.protocol?.max !== 3) throw new Error("update-manifest protocol 范围不正确。");
 for (const feature of requiredFeatures) {
   if (!manifest.protocol.features?.includes(feature)) throw new Error(`update-manifest 缺少 feature：${feature}`);
   if (!manifest.features?.includes(feature)) throw new Error(`update-manifest 顶层缺少 feature：${feature}`);

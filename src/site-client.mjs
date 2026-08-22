@@ -109,6 +109,18 @@ export async function pollTask(config, options = {}) {
   return client.poll(pollOptions);
 }
 
+/** Optional terminal-task cleanup queue. A 404/405 means the paired site is older. */
+export async function pollTaskCleanup(config) {
+  const client = await modelingClient(config);
+  return client.getCleanup();
+}
+
+/** Idempotently acknowledge one explicit, safe local task-directory cleanup. */
+export async function acknowledgeTaskCleanup(config, request, result) {
+  const client = await modelingClient(config);
+  return client.acknowledgeCleanup(request, result);
+}
+
 export async function sendEvent(config, taskId, stage, progress, message, telemetry = undefined, context = undefined) {
   const client = await modelingClient(config);
   return client.sendEvent(taskId, stage, progress, message, telemetry, context);

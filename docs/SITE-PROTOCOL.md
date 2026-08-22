@@ -11,12 +11,48 @@ The bridge intentionally uses the existing private modeling-center runner contra
 | `/api/runner/messages` | GET/POST | Optional task-local user supplement and Runner assistant/system message bridge |
 | `/api/runner/cancel` | POST | Optional explicit cancellation settlement |
 | `/api/runner/usage` | POST | Replay a locally stored usage record for a task without changing its task status |
+| `/api/runner/cleanup` | GET | Optional persistent queue of explicit terminal-task local cleanup requests |
+| `/api/runner/cleanup/ack` | POST | Optional idempotent acknowledgement of a local cleanup result |
 | `/api/runner/artifacts` | POST multipart | Upload one validated artifact |
 | `/api/runner/complete` | POST | Mark the claimed task completed, planned, or failed |
 
 The runner sends `Authorization: Bearer <runner-token>` on all post-pair requests and `OAI-Sites-Authorization: Bearer <site-bypass-token>` for Sites dispatch. The local state module keeps both values out of source control.
 
 The server remains the source of truth for task ownership. This client does not add a second queue, a shared bot login, or a cross-device credential cache.
+
+## Optional terminal-task local cleanup
+
+When a user deletes an already completed, failed, or cancelled task from the website, the site may keep a cleanup request until the matching Runner acknowledges it. This also lets an offline Runner receive the request on a later poll. The preferred contract is:
+
+```http
+GET /api/runner/cleanup
+```
+
+```json
+{
+  "cleanupRequests": [
+    {
+      "requestId": "cleanup_01",
+      "taskId": "task_01",
+      "action": "delete_local_task_data",
+      "taskStatus": "completed"
+    }
+  ]
+}
+```
+
+The same optional `cleanupRequests` array may also be included in a normal `/api/runner/poll` response. Bridge accepts only a safe request ID and task ID, a recognized delete action, and a terminal `taskStatus` (`completed`, `failed`, `cancelled`/`canceled`). It resolves the target as the one direct child `<workspace>/tasks/<taskId>`, refuses symlinks or any path outside that directory, and never deletes the workspace, another task, credentials, configuration, or global Agent data. An active task is deferred until its Runner turn ends.
+
+After a local result, Bridge posts only an idempotent, path-free receipt:
+
+```http
+POST /api/runner/cleanup/ack
+Content-Type: application/json
+
+{"requestId":"cleanup_01","taskId":"task_01","taskStatus":"completed","outcome":"deleted"}
+```
+
+`outcome` is `deleted`, `not_found` (already absent), or `rejected` plus a short reason code. No absolute local path, transcript, artifact content, secret, login state, or directory listing is uploaded. If either cleanup endpoint returns `404` or `405`, Bridge disables this optional flow for the process and continues normal legacy polling and task execution.
 
 ## Optional local agent
 

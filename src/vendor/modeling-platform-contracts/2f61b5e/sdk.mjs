@@ -1,6 +1,8 @@
 import {
   normalizeControlPayload,
   normalizeCheckpoint,
+  normalizeCleanupPayload,
+  normalizeCleanupRequest,
   normalizeModelPreference,
   normalizeSite,
   normalizeTaskMessage,
@@ -94,6 +96,26 @@ export function createModelingClient({
     },
     poll(options = {}) {
       return request("/api/runner/poll", { method: "GET", ...options });
+    },
+    getCleanup() {
+      return request("/api/runner/cleanup", { method: "GET" }).then((payload) => normalizeCleanupPayload(payload));
+    },
+    acknowledgeCleanup(requestValue, result = {}) {
+      const requestValueNormalized = normalizeCleanupRequest(requestValue);
+      if (!requestValueNormalized) throw new Error("无效的本地任务清理回执，未发送。");
+      const outcome = ["deleted", "not_found", "rejected"].includes(String(result.outcome || "").trim().toLowerCase())
+        ? String(result.outcome).trim().toLowerCase()
+        : "rejected";
+      return request("/api/runner/cleanup/ack", {
+        method: "POST",
+        body: JSON.stringify({
+          requestId: requestValueNormalized.requestId,
+          taskId: requestValueNormalized.taskId,
+          taskStatus: requestValueNormalized.taskStatus,
+          outcome,
+          reasonCode: redactedText(result.reasonCode, 120) || undefined,
+        }),
+      });
     },
     sendEvent(taskId, stage, progress, message, value = undefined, context = undefined) {
       const payload = { taskId, stage, progress, message };

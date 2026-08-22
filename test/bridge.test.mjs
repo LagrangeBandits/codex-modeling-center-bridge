@@ -1,11 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
 import { normalizeSite, siteAgentValue, siteRequest, uploadArtifact } from "../src/site-client.mjs";
 import { createModelingClient } from "../src/vendor/modeling-platform-contracts/2f61b5e/sdk.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
 import { agentLabel, BRIDGE_VERSION, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
+import { cleanupTaskDirectory } from "../src/task-cleanup.mjs";
 import { isSupportedPythonVersion } from "../src/modeling-env.mjs";
 import { claudeEventText, parseClaudeEventLine } from "../src/claude-session.mjs";
 import { createUsageAccumulator, extractAgentUsage, usagePayload } from "../src/usage.mjs";
@@ -18,6 +22,7 @@ import { platformAndArchitecture } from "../scripts/update-manifest-utils.mjs";
 import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
 import { agentProfiles, buildCliArgs, capabilitiesForAgent, cliProfileForAgent, profileCapabilities } from "../src/cli-agents.mjs";
 import { needsWindowsShell } from "../src/process.mjs";
+import { normalizeCleanupPayload } from "../src/vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
 
 test("closes the desktop window into the tray unless the user explicitly quits", () => {
   assert.equal(shouldHideToTray(false), true);
@@ -169,6 +174,86 @@ test("does not submit the same usage sequence twice", async () => {
   assert.equal(sent.usageMode, "cumulative");
   assert.equal(sent.usageComplete, true);
   assert.equal("transcript" in sent, false);
+});
+
+test("accepts only explicit terminal task cleanup requests and sends a path-free acknowledgement", async () => {
+  const calls = [];
+  const client = createModelingClient({
+    site: "https://example.test",
+    runnerToken: "runner-token",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith("/cleanup") && options.method === "GET") {
+        return new Response(JSON.stringify({
+          cleanupRequests: [
+            { requestId: "cleanup-1", taskId: "task-1", action: "delete_local_task_data", taskStatus: "completed" },
+            { requestId: "cleanup-unsafe", taskId: "../outside", action: "delete", taskStatus: "completed" },
+            { requestId: "cleanup-open", taskId: "task-2", action: "delete", taskStatus: "queued" },
+          ],
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
+  });
+  const requests = await client.getCleanup();
+  assert.deepEqual(requests, [{
+    requestId: "cleanup-1",
+    taskId: "task-1",
+    action: "delete_local_task_data",
+    taskStatus: "completed",
+    requestedAt: null,
+  }]);
+  await client.acknowledgeCleanup(requests[0], { outcome: "deleted", reasonCode: "LOCAL_TASK_REMOVED" });
+  const acknowledgement = JSON.parse(calls.at(-1).options.body);
+  assert.deepEqual(acknowledgement, {
+    requestId: "cleanup-1",
+    taskId: "task-1",
+    taskStatus: "completed",
+    outcome: "deleted",
+    reasonCode: "LOCAL_TASK_REMOVED",
+  });
+  assert.equal(JSON.stringify(acknowledgement).includes("/Users/"), false);
+  assert.equal(normalizeCleanupPayload({ cleanup: { requestId: "x", taskId: "task", action: "cleanup", taskStatus: "failed" } }).length, 1);
+});
+
+test("local cleanup cannot escape the task root, active task, or symlink target", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "modeling-center-cleanup-"));
+  const workspace = path.join(temporary, "workspace");
+  const tasks = path.join(workspace, "tasks");
+  const taskDirectory = path.join(tasks, "task-1");
+  const outside = path.join(temporary, "outside.txt");
+  const request = { requestId: "cleanup-1", taskId: "task-1", action: "delete", taskStatus: "completed" };
+  try {
+    await fs.mkdir(taskDirectory, { recursive: true });
+    await fs.writeFile(path.join(taskDirectory, "events.jsonl"), "safe local task data\n");
+    await fs.writeFile(outside, "must remain\n");
+
+    const deferred = await cleanupTaskDirectory(workspace, request, new Set(["task-1"]));
+    assert.deepEqual(deferred, { requestId: "cleanup-1", taskId: "task-1", outcome: "deferred", reasonCode: "TASK_ACTIVE" });
+    assert.equal(await fs.readFile(path.join(taskDirectory, "events.jsonl"), "utf8"), "safe local task data\n");
+
+    const removed = await cleanupTaskDirectory(workspace, request);
+    assert.deepEqual(removed, { requestId: "cleanup-1", taskId: "task-1", outcome: "deleted" });
+    await assert.rejects(() => fs.access(taskDirectory), { code: "ENOENT" });
+    assert.equal(await fs.readFile(outside, "utf8"), "must remain\n");
+    assert.deepEqual(await cleanupTaskDirectory(workspace, request), { requestId: "cleanup-1", taskId: "task-1", outcome: "not_found" });
+    assert.deepEqual(await cleanupTaskDirectory(workspace, { ...request, taskId: "../outside" }), {
+      requestId: "cleanup-1", taskId: "../outside", outcome: "rejected", reasonCode: "UNSAFE_TASK_ID",
+    });
+
+    try {
+      await fs.symlink(outside, path.join(tasks, "task-link"));
+      assert.deepEqual(await cleanupTaskDirectory(workspace, { ...request, requestId: "cleanup-2", taskId: "task-link" }), {
+        requestId: "cleanup-2", taskId: "task-link", outcome: "rejected", reasonCode: "TASK_DIRECTORY_NOT_PLAIN_DIRECTORY",
+      });
+    } catch (error) {
+      // Some locked-down Windows test hosts do not grant symlink creation.
+      assert.match(String(error?.code || error), /EPERM|EACCES|operation not permitted/i);
+    }
+    assert.equal(await fs.readFile(outside, "utf8"), "must remain\n");
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
 });
 
 test("only uploads CAD/support files from artifacts", () => {

@@ -35,6 +35,10 @@ Runner 优先读取 `GET /api/runner/messages?taskId=...` 的 `cancelRequestedAt
 4. 取消时是否在安全检查点停止；
 5. 本地日志是否没有密钥、登录状态、完整 transcript 或未脱敏命令参数。
 
+## 已删除任务的本地清理
+
+网站只可为已完成、失败或已取消的任务签发带 `requestId` 的清理请求。Runner 仅删除 `<workspace>/tasks/<taskId>` 这个经过安全 taskId 校验的单一任务目录；活动任务延后，符号链接、越界路径、工作区根目录、配置、凭据和其他任务一律拒绝。目录原本不存在也回传 `not_found`，使重试和离线后领取保持幂等。回执不含绝对路径或本地文件清单；网站旧版本缺少该可选接口时，Runner 不会尝试清理。
+
 ## 配额暂停与恢复
 
 余额不足、限流或站点明确 `pauseRequested` 时，Runner 会先写入不含 transcript、密钥和完整本地路径的 `checkpoint.json`，再回传 `checkpointId`、`attemptId`、阶段、聚合 usage、`resumeSupported` 和原因码。只有 Agent 真正支持会话恢复时才允许标记可恢复；不支持恢复的 CLI 不得伪装成可继续执行。

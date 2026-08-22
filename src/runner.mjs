@@ -9,13 +9,14 @@ import { identityFromEvent, identityFromEvents, loadLocalAgentIdentity } from ".
 import { loadSession, prepareTaskDirectory, redactForLog } from "./codex-session.mjs";
 import { loadLocalCheckpoint, writeLocalCheckpoint } from "./checkpoint.mjs";
 import { loadConfig } from "./state.mjs";
-import { cancelTask, checkpointTask, completeTask, pollTask, pollTaskControl, reportTaskUsage, sendEvent, sendHeartbeat, sendTaskMessage, uploadArtifact } from "./site-client.mjs";
+import { acknowledgeTaskCleanup, cancelTask, checkpointTask, completeTask, pollTask, pollTaskCleanup, pollTaskControl, reportTaskUsage, sendEvent, sendHeartbeat, sendTaskMessage, uploadArtifact } from "./site-client.mjs";
 import { sleep } from "./process.mjs";
 import { createUsageAccumulator, usagePayload } from "./usage.mjs";
 import { capabilitiesForAgent, profileCapabilities } from "./cli-agents.mjs";
 import { collectSystemMetrics, heartbeatPayload } from "./heartbeat.mjs";
 import { cancellationState, isQuotaError, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, pauseDirective, TaskCancelledError, TaskPausedError, taskMessagesFromTask, taskPromptWithMessages } from "./task-control.mjs";
-import { normalizeTask as normalizeModelingTask } from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
+import { normalizeCleanupPayload, normalizeTask as normalizeModelingTask } from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
+import { cleanupTaskDirectory } from "./task-cleanup.mjs";
 
 const CONTROL_POLL_INTERVAL_MS = 1_500;
 
@@ -33,6 +34,30 @@ async function reportUsage(config, taskId, telemetry) {
     await reportTaskUsage(config, taskId, telemetry);
   } catch (error) {
     console.error(`用量回传失败（不影响当前任务）：${redactForLog(error?.message || error)}`);
+  }
+}
+
+async function processCleanupRequests(config, requests, activeTaskIds, cleanupState) {
+  for (const request of requests) {
+    let result;
+    try {
+      result = await cleanupTaskDirectory(config.workspace, request, activeTaskIds);
+    } catch (error) {
+      console.warn(`本地任务清理失败（将保留任务目录并稍后重试）：${redactForLog(error?.message || error)}\n`);
+      continue;
+    }
+    if (result.outcome === "deferred") continue;
+    try {
+      await acknowledgeTaskCleanup(config, request, result);
+      structuredRunnerLog("task.cleanup", { taskId: request.taskId, requestId: request.requestId, outcome: result.outcome, reasonCode: result.reasonCode || null });
+    } catch (error) {
+      if (error?.status === 404 || error?.status === 405) {
+        cleanupState.ackUnsupported = true;
+        console.warn("站点未提供可选本地清理回执接口；已停止领取新的清理指令，正常任务不受影响。\n");
+        return;
+      }
+      console.warn(`本地任务清理回执失败（下次轮询将幂等重试）：${redactForLog(error?.message || error)}\n`);
+    }
   }
 }
 
@@ -580,6 +605,8 @@ export async function startRunner(options = {}) {
     ? Math.max(1, Math.min(8, requestedConcurrency))
     : 1;
   const active = new Set();
+  const activeTaskIds = new Set();
+  const cleanupState = { unsupported: false, ackUnsupported: false, lastWarningAt: 0 };
   const runnerIdentity = await loadLocalAgentIdentity(config.agent, config);
   const requestedHeartbeatInterval = Number(options.heartbeatIntervalMs || DEFAULT_HEARTBEAT_INTERVAL_MS);
   const heartbeatIntervalMs = Number.isFinite(requestedHeartbeatInterval)
@@ -652,6 +679,23 @@ export async function startRunner(options = {}) {
 
   while (true) {
     triggerHeartbeat();
+    if (!cleanupState.unsupported && !cleanupState.ackUnsupported) {
+      try {
+        const requests = await pollTaskCleanup(config);
+        await processCleanupRequests(config, requests, activeTaskIds, cleanupState);
+      } catch (error) {
+        if (error?.status === 404 || error?.status === 405) {
+          cleanupState.unsupported = true;
+          console.warn("站点未提供可选本地任务清理接口；继续使用旧版任务协议。\n");
+        } else {
+          const now = Date.now();
+          if (now - cleanupState.lastWarningAt >= 15_000) {
+            cleanupState.lastWarningAt = now;
+            console.warn(`本地任务清理轮询失败（不影响任务领取）：${redactForLog(error?.message || error)}\n`);
+          }
+        }
+      }
+    }
     while (active.size < concurrency) {
       let payload;
       try {
@@ -663,6 +707,10 @@ export async function startRunner(options = {}) {
           console.warn(`任务轮询失败（将自动重试，不影响已运行任务）：${redactForLog(error?.message || error)}\n`);
         }
         break;
+      }
+      if (!cleanupState.ackUnsupported) {
+        const piggybackRequests = normalizeCleanupPayload(payload);
+        if (piggybackRequests.length) await processCleanupRequests(config, piggybackRequests, activeTaskIds, cleanupState);
       }
       if (!payload?.task) break;
       const serverControl = payload.control && typeof payload.control === "object" ? payload.control : {};
@@ -677,8 +725,10 @@ export async function startRunner(options = {}) {
         ...(payload.checkpoint !== undefined || serverControl.checkpoint !== undefined ? { checkpoint: payload.checkpoint ?? serverControl.checkpoint } : {}),
         ...(payload.attemptId !== undefined || serverControl.attemptId !== undefined ? { attemptId: payload.attemptId ?? serverControl.attemptId } : {}),
       };
+      activeTaskIds.add(task.id);
       const taskPromise = runOne(config, task, absorbTelemetry).finally(() => {
         active.delete(taskPromise);
+        activeTaskIds.delete(task.id);
         triggerHeartbeat(true);
       });
       active.add(taskPromise);

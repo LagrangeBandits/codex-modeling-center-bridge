@@ -57,6 +57,7 @@ The Electron renderer has no Node integration. Context isolation and a narrow pr
 - A runner can be restarted; queued tasks remain queued on the site.
 - Server priority remains authoritative; the Runner never reorders or duplicates the site queue.
 - A cancellation is checked before Agent startup, during streamed events, before uploads, and before settlement. If the optional control endpoint is missing, normal legacy execution continues.
+- A website deletion of a terminal task becomes a separate persistent cleanup request. The Runner deletes only the matching direct child of its task root after path and symlink checks, then sends an idempotent path-free receipt; offline devices receive it on a later cleanup poll.
 - Web supplements are task-local context only; they never open or synchronize a user's personal Codex/Claude conversation.
 - Raw credentials are excluded from task prompts, transcripts, artifacts, and Git.
 

@@ -90,6 +90,7 @@ const protocolFeatures = [
   "usage-sequences",
   "pause-checkpoint-resume",
   "heartbeat-capabilities",
+  "terminal-task-cleanup",
   "legacy-protocol-fallback",
 ];
 
@@ -108,11 +109,11 @@ const manifest = {
   sourceCommit,
   protocol: {
     min: 1,
-    max: 2,
+    max: 3,
     features: protocolFeatures,
   },
   features: protocolFeatures,
-  siteContract: { min: 1, max: 2 },
+  siteContract: { min: 1, max: 3 },
   assets,
 };
 

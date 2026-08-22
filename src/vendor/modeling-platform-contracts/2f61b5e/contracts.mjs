@@ -4,12 +4,16 @@ const CONTROL_ACTIONS = new Set(["none", "pause", "resume", "cancel"]);
 const QUOTA_STATES = new Set(["ok", "insufficient", "rate_limited", "auth_required", "unknown"]);
 const USAGE_MODES = new Set(["cumulative", "delta"]);
 const CHECKPOINT_STAGES = new Set(["before_turn", "tool_boundary", "turn_boundary", "before_upload", "agent_error"]);
+const CLEANUP_ACTIONS = new Set(["cleanup", "delete", "delete_local_task_data", "cleanup_task"]);
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "canceled"]);
 const MODEL_PREFERENCE_MAX = 240;
 const MAX_MESSAGE_LENGTH = 8_000;
 const MAX_MESSAGES = 32;
 const MAX_CURSOR_LENGTH = 256;
 const MAX_ATTEMPT_ID_LENGTH = 160;
+const MAX_CLEANUP_REQUESTS = 16;
 const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const CLEANUP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
 const USAGE_KEYS = Object.freeze([
   "inputTokens",
   "outputTokens",
@@ -36,6 +40,11 @@ function cleanCursor(value) {
 
 function cleanAttemptId(value) {
   return cleanText(value, MAX_ATTEMPT_ID_LENGTH);
+}
+
+function cleanCleanupId(value) {
+  const identifier = cleanText(value, MAX_ATTEMPT_ID_LENGTH);
+  return identifier && CLEANUP_ID_PATTERN.test(identifier) ? identifier : null;
 }
 
 function safeModel(value) {
@@ -270,6 +279,43 @@ export function normalizeControlPayload(value) {
   return control;
 }
 
+/**
+ * Normalize an explicit site-issued request to remove local data for one
+ * already-terminal task. Missing request ID, terminal state, or action means
+ * no deletion.
+ */
+export function normalizeCleanupRequest(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const requestId = cleanCleanupId(source.requestId ?? source.request_id ?? source.cleanupId ?? source.cleanup_id);
+  const taskId = cleanCleanupId(source.taskId ?? source.task_id);
+  const action = String(source.action ?? source.type ?? source.kind ?? "").trim().toLowerCase().replace(/[ -]+/g, "_");
+  const taskStatus = String(source.taskStatus ?? source.task_status ?? source.finalStatus ?? source.final_status ?? "").trim().toLowerCase();
+  if (!requestId || !taskId || !CLEANUP_ACTIONS.has(action) || !TERMINAL_TASK_STATUSES.has(taskStatus)) return null;
+  return {
+    requestId,
+    taskId,
+    action,
+    taskStatus,
+    requestedAt: cleanText(source.requestedAt ?? source.requested_at ?? source.deletedAt ?? source.deleted_at, 80),
+  };
+}
+
+export function normalizeCleanupPayload(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const raw = source.cleanupRequests ?? source.cleanup_requests ?? source.cleanups ?? source.cleanup ?? source.requests ?? [];
+  const values = Array.isArray(raw) ? raw : [raw];
+  const requests = [];
+  const seen = new Set();
+  for (const item of values) {
+    const request = normalizeCleanupRequest(item);
+    if (!request || seen.has(request.requestId)) continue;
+    seen.add(request.requestId);
+    requests.push(request);
+    if (requests.length >= MAX_CLEANUP_REQUESTS) break;
+  }
+  return requests;
+}
+
 export function normalizeUsage(raw) {
   const usage = emptyUsage();
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { usage, complete: false, reason: "终结响应没有 usage 对象。" };
@@ -315,4 +361,4 @@ export function normalizeTelemetry(value) {
   return telemetry;
 }
 
-export { CHECKPOINT_STAGES, CONTROL_ACTIONS, MAX_ATTEMPT_ID_LENGTH, MAX_MESSAGE_LENGTH, MAX_MESSAGES, QUOTA_STATES, USAGE_KEYS, USAGE_MODES };
+export { CHECKPOINT_STAGES, CLEANUP_ACTIONS, CONTROL_ACTIONS, MAX_ATTEMPT_ID_LENGTH, MAX_CLEANUP_REQUESTS, MAX_MESSAGE_LENGTH, MAX_MESSAGES, QUOTA_STATES, TERMINAL_TASK_STATUSES, USAGE_KEYS, USAGE_MODES };
