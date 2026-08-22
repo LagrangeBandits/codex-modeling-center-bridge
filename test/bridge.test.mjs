@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { hasFlag, parseArgs, requiredValue } from "../src/args.mjs";
 import { normalizeSite, siteAgentValue, siteRequest, uploadArtifact } from "../src/site-client.mjs";
-import { createModelingClient } from "../src/vendor/modeling-platform-contracts/2f61b5e/sdk.mjs";
+import { createModelingClient } from "../src/vendor/modeling-platform-contracts/b50bc72/sdk.mjs";
 import { uploadable, hasCadArtifact } from "../src/artifacts.mjs";
 import { agentLabel, BRIDGE_VERSION, isSafeTaskId, isSupportedNodeVersion, normalizeAgent, normalizeExecutionMode, resolveTaskAgent } from "../src/constants.mjs";
 import { cleanupTaskDirectory } from "../src/task-cleanup.mjs";
@@ -22,7 +22,7 @@ import { platformAndArchitecture } from "../scripts/update-manifest-utils.mjs";
 import { shouldHideToTray, trayRunnerLabel } from "../src/desktop-window-policy.mjs";
 import { agentProfiles, buildCliArgs, capabilitiesForAgent, cliProfileForAgent, profileCapabilities } from "../src/cli-agents.mjs";
 import { needsWindowsShell } from "../src/process.mjs";
-import { normalizeCleanupPayload } from "../src/vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
+import { normalizeCleanupPayload } from "../src/vendor/modeling-platform-contracts/b50bc72/contracts.mjs";
 
 test("closes the desktop window into the tray unless the user explicitly quits", () => {
   assert.equal(shouldHideToTray(false), true);

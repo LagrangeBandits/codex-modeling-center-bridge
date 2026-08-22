@@ -6,7 +6,7 @@ import {
   normalizeTaskMessage,
   normalizeTaskMessages,
   normalizeTaskPriority,
-} from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
+} from "./vendor/modeling-platform-contracts/b50bc72/contracts.mjs";
 
 function cleanText(value, limit = MAX_MESSAGE_LENGTH) {
   if (typeof value !== "string") return null;

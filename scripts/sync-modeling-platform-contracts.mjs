@@ -11,14 +11,14 @@ const sourceRoot = path.resolve(
   process.env.MODELING_PLATFORM_CONTRACTS_SOURCE ||
     path.join(repositoryRoot, "..", "modeling-platform-contracts"),
 );
-const sourceCommit = "00a02e5902e350c0b1dca4bdda928de7b7ca2f91";
+const sourceCommit = "b50bc727e8722759a2e5cd8ad91854ab746c7d3c";
 const sourceBranch = "codex/contracts-sdk-v1";
 const vendorRoot = path.join(
   repositoryRoot,
   "src",
   "vendor",
   "modeling-platform-contracts",
-  "2f61b5e",
+  "b50bc72",
 );
 const snapshotFiles = ["src/contracts.mjs", "src/sdk.mjs", "src/index.mjs"];
 

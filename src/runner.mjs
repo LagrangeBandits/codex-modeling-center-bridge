@@ -15,7 +15,7 @@ import { createUsageAccumulator, usagePayload } from "./usage.mjs";
 import { capabilitiesForAgent, profileCapabilities } from "./cli-agents.mjs";
 import { collectSystemMetrics, heartbeatPayload } from "./heartbeat.mjs";
 import { cancellationState, isQuotaError, normalizeControlPayload, normalizeTaskMessages, normalizeTaskPriority, pauseDirective, TaskCancelledError, TaskPausedError, taskMessagesFromTask, taskPromptWithMessages } from "./task-control.mjs";
-import { normalizeCleanupPayload, normalizeTask as normalizeModelingTask } from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
+import { normalizeCleanupPayload, normalizeTask as normalizeModelingTask } from "./vendor/modeling-platform-contracts/b50bc72/contracts.mjs";
 import { cleanupTaskDirectory } from "./task-cleanup.mjs";
 
 const CONTROL_POLL_INTERVAL_MS = 1_500;

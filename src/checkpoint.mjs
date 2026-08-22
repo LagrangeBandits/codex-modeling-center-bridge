@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { normalizeCheckpoint } from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
+import { normalizeCheckpoint } from "./vendor/modeling-platform-contracts/b50bc72/contracts.mjs";
 import { usagePayload } from "./usage.mjs";
 
 function safeText(value, limit = 160) {

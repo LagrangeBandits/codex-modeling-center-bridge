@@ -2,7 +2,7 @@ import {
   USAGE_KEYS,
   normalizeUsage as normalizeContractUsage,
   usagePayload as normalizeUsagePayload,
-} from "./vendor/modeling-platform-contracts/2f61b5e/contracts.mjs";
+} from "./vendor/modeling-platform-contracts/b50bc72/contracts.mjs";
 
 function emptyUsage() {
   return Object.fromEntries(USAGE_KEYS.map((key) => [key, null]));
